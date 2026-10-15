@@ -1,0 +1,192 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContactStatus {
+  PENDING
+  QUEUED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  DO_NOT_CALL
+}
+
+enum CallAttemptStatus {
+  INITIATED
+  RINGING
+  IN_PROGRESS
+  ANSWERED
+  BUSY
+  FAILED
+  NO_ANSWER
+  VOICEMAIL
+  CANCELLED
+}
+
+model Organization {
+  id                 String      @id @default(cuid())
+  name               String
+  slug               String      @unique
+  rateLimitPerMinute Int         @default(60)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  workspaces         Workspace[]
+  users              User[]
+  campaigns          Campaign[]
+
+  @@map("organizations")
+}
+
+model Workspace {
+  id             String       @id @default(cuid())
+  name           String
+  slug           String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  campaigns      Campaign[]
+  contacts       Contact[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@map("workspaces")
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String?
+  role           Role         @default(MEMBER)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Campaign {
+  id                   String         @id @default(cuid())
+  name                 String
+  description          String?
+  status               CampaignStatus @default(DRAFT)
+  organizationId       String
+  organization         Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceId          String
+  workspace            Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  
+  // Agent configuration
+  sarvamAgentId        String?
+  agentConfig          Json?
+
+  // Scheduling and allowed calling windows
+  scheduledStartTime   DateTime?
+  scheduledEndTime     DateTime?
+  dailyStartTime       String?        // e.g. "09:00"
+  dailyEndTime         String?        // e.g. "18:00"
+  timezone             String         @default("UTC")
+
+  // Retry rules and concurrency controls
+  maxRetries           Int            @default(3)
+  retryIntervalMinutes Int            @default(30)
+  concurrencyLimit     Int            @default(5)
+
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  contacts             Contact[]
+  callAttempts         CallAttempt[]
+
+  @@index([organizationId])
+  @@index([workspaceId])
+  @@index([status])
+  @@map("campaigns")
+}
+
+model Contact {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaignId      String
+  campaign        Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  phoneNumber     String
+  firstName       String?
+  lastName        String?
+  customVariables Json?
+
+  status          ContactStatus @default(PENDING)
+  retryCount      Int           @default(0)
+  maxRetries      Int           @default(3)
+  lastAttemptAt   DateTime?
+  nextAttemptAt   DateTime?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  callAttempts    CallAttempt[]
+
+  @@index([workspaceId])
+  @@index([campaignId])
+  @@index([phoneNumber])
+  @@index([status])
+  @@index([nextAttemptAt])
+  @@map("contacts")
+}
+
+model CallAttempt {
+  id             String            @id @default(cuid())
+  campaignId     String
+  campaign       Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  
+  attemptNumber  Int               @default(1)
+  status         CallAttemptStatus @default(INITIATED)
+  externalCallId String?           @unique
+  
+  durationSeconds Int?
+  startedAt      DateTime?
+  endedAt        DateTime?
+  failureReason  String?
+  recordingUrl   String?
+  transcript     String?
+  rawResponse    Json?
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([campaignId])
+  @@index([contactId])
+  @@index([status])
+  @@index([externalCallId])
+  @@map("call_attempts")
+}
+
