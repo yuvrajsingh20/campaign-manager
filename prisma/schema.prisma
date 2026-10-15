@@ -93,36 +93,50 @@ model User {
 }
 
 model Campaign {
-  id                   String         @id @default(cuid())
-  name                 String
-  description          String?
-  status               CampaignStatus @default(DRAFT)
-  organizationId       String
-  organization         Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  workspaceId          String
-  workspace            Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id                          String         @id @default(cuid())
+  name                        String
+  description                 String?
+  status                      CampaignStatus @default(DRAFT)
+  organizationId              String
+  organization                Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceId                 String
+  workspace                   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   
   // Agent configuration
-  sarvamAgentId        String?
-  agentConfig          Json?
+  sarvamAgentId               String?
+  agentAppId                  String?
+  agentVersion                String?        @default("v1")
+  agentType                   String?        @default("outbound_voice")
+  agentConfig                 Json?
+  requiredVariables           String[]       @default([])
+
+  // Telephony & Rate controls
+  connectionId                String?
+  callerPhoneNumber           String?
+  maxRequestsPerSecond        Float          @default(5.0)
 
   // Scheduling and allowed calling windows
-  scheduledStartTime   DateTime?
-  scheduledEndTime     DateTime?
-  dailyStartTime       String?        // e.g. "09:00"
-  dailyEndTime         String?        // e.g. "18:00"
-  timezone             String         @default("UTC")
+  scheduledStartTime          DateTime?
+  scheduledEndTime            DateTime?
+  dailyStartTime              String?        @default("09:00") // e.g. "09:00"
+  dailyEndTime                String?        @default("18:00") // e.g. "18:00"
+  timezone                    String         @default("UTC")
+  allowedDays                 String[]       @default(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"])
 
   // Retry rules and concurrency controls
-  maxRetries           Int            @default(3)
-  retryIntervalMinutes Int            @default(30)
-  concurrencyLimit     Int            @default(5)
+  maxRetries                  Int            @default(3)
+  retryIntervalMinutes        Int            @default(30)
+  concurrencyLimit            Int            @default(5)
+  retryOnBusy                 Boolean        @default(true)
+  retryOnNoAnswer             Boolean        @default(true)
+  retryOnShortDuration        Boolean        @default(true)
+  shortDurationThresholdSeconds Int          @default(15)
 
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  createdAt                   DateTime       @default(now())
+  updatedAt                   DateTime       @updatedAt
 
-  contacts             Contact[]
-  callAttempts         CallAttempt[]
+  contacts                    Contact[]
+  callAttempts                CallAttempt[]
 
   @@index([organizationId])
   @@index([workspaceId])
@@ -132,6 +146,7 @@ model Campaign {
 
 model Contact {
   id              String        @id @default(cuid())
+  leadId          String?
   workspaceId     String
   workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaignId      String
@@ -153,8 +168,10 @@ model Contact {
 
   callAttempts    CallAttempt[]
 
+  @@unique([campaignId, phoneNumber])
   @@index([workspaceId])
   @@index([campaignId])
+  @@index([leadId])
   @@index([phoneNumber])
   @@index([status])
   @@index([nextAttemptAt])
@@ -189,4 +206,3 @@ model CallAttempt {
   @@index([externalCallId])
   @@map("call_attempts")
 }
-

@@ -49,10 +49,35 @@ export interface DashboardStats {
 }
 
 export interface ContactCsvRow {
+  leadId?: string;
   phoneNumber: string;
   firstName?: string;
   lastName?: string;
-  [key: string]: string | undefined;
+  customVariables?: Record<string, unknown>;
+}
+
+export interface CohortUploadSummary {
+  totalRowsProcessed: number;
+  acceptedRows: number;
+  rejectedRows: number;
+  duplicatesSkipped: number;
+  errors: Array<{
+    row: number;
+    error: string;
+    details?: string;
+  }>;
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  pagination: PaginationMeta;
 }
 
 export interface ApiResponse<T = unknown> {

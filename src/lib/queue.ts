@@ -36,3 +36,4 @@ export const getOutboundCallQueue = (): Queue<OutboundCallJobData> => {
   }
   return globalForQueue.outboundCallQueue;
 };
+

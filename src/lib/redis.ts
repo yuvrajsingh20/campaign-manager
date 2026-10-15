@@ -22,3 +22,4 @@ export const getRedisClient = (): Redis => {
 export const redis = getRedisClient();
 
 export default redis;
+
