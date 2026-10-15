@@ -1,0 +1,228 @@
+import { prisma } from "./prisma";
+import { OrgRateLimiter } from "./rate-limiter";
+import { isCallingWindowOpen } from "./scheduler";
+import { sarvamClient, SarvamApiError, SarvamClient } from "./sarvam";
+import { OutboundCallJobData, enqueueContactRetry } from "./queue";
+
+export interface ExecutionResult {
+  status: "DISPATCHED" | "SKIPPED" | "RESCHEDULED" | "FAILED" | "RATE_LIMITED";
+  attemptId?: string;
+  reason?: string;
+}
+
+/**
+ * Core business processor for dispatching an outbound call job.
+ * Enforces PostgreSQL authoritative state, calling windows, organization rate limits,
+ * durable attempt logging, and Sarvam API communication.
+ */
+export async function processOutboundCallJob(
+  jobData: OutboundCallJobData
+): Promise<ExecutionResult> {
+  const { campaignId, contactId } = jobData;
+
+  // 1. Authoritative check: Load Campaign and Contact state from PostgreSQL
+  const [campaign, contact] = await Promise.all([
+    prisma.campaign.findUnique({
+      where: { id: campaignId },
+      include: {
+        organization: {
+          select: { id: true, rateLimitPerMinute: true },
+        },
+      },
+    }),
+    prisma.contact.findUnique({
+      where: { id: contactId },
+    }),
+  ]);
+
+  if (!campaign) {
+    return { status: "SKIPPED", reason: `Campaign ${campaignId} not found` };
+  }
+
+  if (!contact) {
+    return { status: "SKIPPED", reason: `Contact ${contactId} not found` };
+  }
+
+  // Guard: Campaign must be strictly RUNNING
+  if (campaign.status !== "RUNNING") {
+    // If paused, revert contact to PENDING so it can resume later
+    if (campaign.status === "PAUSED" && contact.status === "QUEUED") {
+      await prisma.contact.update({
+        where: { id: contactId },
+        data: { status: "PENDING" },
+      });
+    }
+    return {
+      status: "SKIPPED",
+      reason: `Campaign is in '${campaign.status}' state, not RUNNING`,
+    };
+  }
+
+  // Guard: Contact must be QUEUED or PENDING (prevent duplicate attempts or calling completed leads)
+  if (contact.status !== "QUEUED" && contact.status !== "PENDING") {
+    return {
+      status: "SKIPPED",
+      reason: `Contact is already in '${contact.status}' status`,
+    };
+  }
+
+  // 2. Calling window and scheduling check
+  const windowCheck = isCallingWindowOpen(campaign);
+  if (!windowCheck.isAllowed) {
+    const delay = windowCheck.delayMs || 3600 * 1000;
+    const nextDate = new Date(Date.now() + delay);
+
+    // Reschedule in database and queue
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        status: "PENDING",
+        nextAttemptAt: nextDate,
+      },
+    });
+
+    // Re-enqueue for next window
+    await enqueueContactRetry(campaignId, contactId, contact.retryCount + 1, delay);
+
+    return {
+      status: "RESCHEDULED",
+      reason: windowCheck.reason || "Outside permitted calling window",
+    };
+  }
+
+  // 3. Organisation-wide rate limiting immediately prior to dispatch
+  // Effective requests-per-second derived from org rate limit or campaign setting
+  const orgRps = campaign.organization.rateLimitPerMinute > 0
+    ? campaign.organization.rateLimitPerMinute / 60
+    : campaign.maxRequestsPerSecond;
+
+  const rateCheck = await OrgRateLimiter.acquire(
+    campaign.organizationId,
+    Math.min(orgRps, campaign.maxRequestsPerSecond)
+  );
+
+  if (!rateCheck.allowed) {
+    const delay = Math.max(500, rateCheck.retryAfterMs);
+    // Delay contact attempt
+    await enqueueContactRetry(campaignId, contactId, contact.retryCount + 1, delay);
+    return {
+      status: "RATE_LIMITED",
+      reason: `Org-wide rate limit reached. Re-enqueued in ${delay}ms`,
+    };
+  }
+
+  // 4. Create persistent CallAttempt record in PostgreSQL
+  const attemptNumber = contact.retryCount + 1;
+  const callAttempt = await prisma.callAttempt.create({
+    data: {
+      campaignId,
+      contactId,
+      attemptNumber,
+      status: "INITIATED",
+      startedAt: new Date(),
+    },
+  });
+
+  // Mark contact as IN_PROGRESS
+  await prisma.contact.update({
+    where: { id: contactId },
+    data: {
+      status: "IN_PROGRESS",
+      retryCount: attemptNumber,
+      lastAttemptAt: new Date(),
+    },
+  });
+
+  // 5. Construct mapped Sarvam payload matching official API contract
+  const appVersion = SarvamClient.parseAppVersion(campaign.agentVersion);
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/webhooks/sarvam`;
+
+  const payload = {
+    app_config: {
+      app_id: campaign.agentAppId || campaign.sarvamAgentId || "default_app",
+      app_version: appVersion,
+      app_type: campaign.agentType || "outbound_voice",
+      connection_config: {
+        connection_id: campaign.connectionId || "conn_default",
+        agent_phone_number: campaign.callerPhoneNumber || "+10000000000",
+      },
+      agent_variables: (contact.customVariables as Record<string, unknown>) || {},
+    },
+    user_config: {
+      user_phone_number: contact.phoneNumber,
+    },
+    webhook_config: {
+      url: webhookUrl,
+      metadata: {
+        campaign_id: campaign.id,
+        contact_id: contact.id,
+        lead_id: contact.leadId || "",
+        attempt_id: callAttempt.id,
+      },
+    },
+  };
+
+  // 6. Dispatch outbound call
+  try {
+    const response = await sarvamClient.createOutboundCall(
+      campaign.organizationId,
+      campaign.workspaceId,
+      payload
+    );
+
+    // Update CallAttempt with provider external attempt ID
+    await prisma.callAttempt.update({
+      where: { id: callAttempt.id },
+      data: {
+        externalCallId: response.attempt_id,
+        status: "RINGING",
+      },
+    });
+
+    return {
+      status: "DISPATCHED",
+      attemptId: response.attempt_id,
+    };
+  } catch (error) {
+    const isSarvamError = error instanceof SarvamApiError;
+    const isAmbiguous = isSarvamError ? error.isAmbiguous : false;
+    const failureReason = error instanceof Error ? error.message : "Unknown dispatch error";
+
+    console.error(`[ExecutionEngine] Dispatch failed for contact ${contactId}:`, failureReason);
+
+    await prisma.callAttempt.update({
+      where: { id: callAttempt.id },
+      data: {
+        status: "FAILED",
+        failureReason,
+        endedAt: new Date(),
+        rawResponse: isSarvamError && error.details ? (error.details as object) : undefined,
+      },
+    });
+
+    // If dispatch failure is definitive (e.g. invalid phone number / 4xx), check retries
+    if (!isAmbiguous) {
+      if (attemptNumber < campaign.maxRetries) {
+        const backoffMs = campaign.retryIntervalMinutes * 60 * 1000;
+        await prisma.contact.update({
+          where: { id: contactId },
+          data: {
+            status: "PENDING",
+            nextAttemptAt: new Date(Date.now() + backoffMs),
+          },
+        });
+        await enqueueContactRetry(campaignId, contactId, attemptNumber + 1, backoffMs);
+      } else {
+        await prisma.contact.update({
+          where: { id: contactId },
+          data: { status: "FAILED" },
+        });
+      }
+    }
+
+    return {
+      status: "FAILED",
+      reason: failureReason,
+    };
+  }
+}

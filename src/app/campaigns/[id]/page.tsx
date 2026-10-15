@@ -15,6 +15,14 @@ import {
   Search,
   RefreshCw,
   Calendar,
+  Play,
+  Pause,
+  Square,
+  AlertCircle,
+  Loader2,
+  CheckCircle,
+  PhoneCall,
+  XCircle,
 } from "lucide-react";
 import { CampaignStatus, ContactStatus } from "@/types";
 
@@ -87,8 +95,12 @@ function CampaignDetailContent({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  // Lifecycle action state
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [autoPoll, setAutoPoll] = useState(false);
 
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
@@ -128,6 +140,15 @@ function CampaignDetailContent({
     };
   }, [id, page, statusFilter, search, refreshTrigger]);
 
+  // Polling effect: Polls campaign and contact stats every 5 seconds if enabled
+  useEffect(() => {
+    if (!autoPoll) return;
+    const interval = setInterval(() => {
+      setRefreshTrigger((prev) => prev + 1);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [autoPoll]);
+
   const handleRefresh = () => {
     setLoadingContacts(true);
     setRefreshTrigger((prev) => prev + 1);
@@ -137,6 +158,28 @@ function CampaignDetailContent({
     e.preventDefault();
     setPage(1);
     handleRefresh();
+  };
+
+  const handleLifecycleAction = async (action: "start" | "pause" | "resume" | "stop") => {
+    setActionError(null);
+    setActionLoading(true);
+
+    try {
+      const res = await fetch(`/api/campaigns/${id}/${action}`, {
+        method: "POST",
+      });
+      const result = await res.json();
+
+      if (!res.ok || !result.success) {
+        throw new Error(result.error?.message || `Failed to ${action} campaign`);
+      }
+
+      handleRefresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : `Failed to ${action} campaign`);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const getStatusBadge = (status: CampaignStatus | ContactStatus) => {
@@ -191,6 +234,12 @@ function CampaignDetailContent({
     );
   }
 
+  // Summary counts from current loaded contacts list
+  const pendingCount = contacts.filter((c) => c.status === "PENDING" || c.status === "QUEUED").length;
+  const inProgressCount = contacts.filter((c) => c.status === "IN_PROGRESS").length;
+  const completedCount = contacts.filter((c) => c.status === "COMPLETED").length;
+  const failedCount = contacts.filter((c) => c.status === "FAILED" || c.status === "DO_NOT_CALL").length;
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col font-sans">
       <Navbar />
@@ -223,23 +272,145 @@ function CampaignDetailContent({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Lifecycle & Cohort Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Lifecycle buttons */}
+            {(campaign.status === "DRAFT" || campaign.status === "SCHEDULED") && (
+              <button
+                type="button"
+                onClick={() => handleLifecycleAction("start")}
+                disabled={actionLoading}
+                className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-xs"
+              >
+                {actionLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />}
+                Start Campaign
+              </button>
+            )}
+
+            {campaign.status === "RUNNING" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleLifecycleAction("pause")}
+                  disabled={actionLoading}
+                  className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  {actionLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Pause className="w-3.5 h-3.5 mr-1.5 fill-current" />}
+                  Pause
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLifecycleAction("stop")}
+                  disabled={actionLoading}
+                  className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  <Square className="w-3.5 h-3.5 mr-1.5 fill-current" />
+                  Stop
+                </button>
+              </>
+            )}
+
+            {campaign.status === "PAUSED" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleLifecycleAction("resume")}
+                  disabled={actionLoading}
+                  className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  {actionLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />}
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLifecycleAction("stop")}
+                  disabled={actionLoading}
+                  className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  <Square className="w-3.5 h-3.5 mr-1.5 fill-current" />
+                  Stop
+                </button>
+              </>
+            )}
+
             <a
               href={`/api/campaigns/${campaign.id}/contacts/sample`}
               download
-              className="inline-flex items-center px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-xs font-medium text-zinc-700 dark:text-zinc-200 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors shadow-2xs"
+              className="inline-flex items-center px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-xs font-medium text-zinc-700 dark:text-zinc-200 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors shadow-2xs"
             >
-              <Download className="w-4 h-4 mr-1.5" />
-              Download Sample CSV
+              <Download className="w-3.5 h-3.5 mr-1.5" />
+              Sample CSV
             </a>
+
             <button
               type="button"
               onClick={() => setIsUploadOpen(true)}
               className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-xs cursor-pointer"
             >
-              <UploadCloud className="w-4 h-4 mr-1.5" />
-              Upload Contacts CSV
+              <UploadCloud className="w-3.5 h-3.5 mr-1.5" />
+              Upload Contacts
             </button>
+          </div>
+        </div>
+
+        {/* Action Error Banner */}
+        {actionError && (
+          <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+        )}
+
+        {/* Status Metrics Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs">
+            <div className="flex items-center justify-between text-zinc-500">
+              <span className="text-2xs font-semibold uppercase">Total In Cohort</span>
+              <Users className="w-3.5 h-3.5" />
+            </div>
+            <p className="mt-1 text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+              {campaign._count.contacts}
+            </p>
+          </div>
+
+          <div className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs">
+            <div className="flex items-center justify-between text-blue-600">
+              <span className="text-2xs font-semibold uppercase">Pending / Queued</span>
+              <Clock className="w-3.5 h-3.5" />
+            </div>
+            <p className="mt-1 text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+              {pendingCount}
+            </p>
+          </div>
+
+          <div className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs">
+            <div className="flex items-center justify-between text-amber-600">
+              <span className="text-2xs font-semibold uppercase">In Progress</span>
+              <PhoneCall className="w-3.5 h-3.5" />
+            </div>
+            <p className="mt-1 text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+              {inProgressCount}
+            </p>
+          </div>
+
+          <div className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs">
+            <div className="flex items-center justify-between text-emerald-600">
+              <span className="text-2xs font-semibold uppercase">Answered</span>
+              <CheckCircle className="w-3.5 h-3.5" />
+            </div>
+            <p className="mt-1 text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+              {completedCount}
+            </p>
+          </div>
+
+          <div className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs col-span-2 sm:col-span-1">
+            <div className="flex items-center justify-between text-rose-600">
+              <span className="text-2xs font-semibold uppercase">Failed / DNC</span>
+              <XCircle className="w-3.5 h-3.5" />
+            </div>
+            <p className="mt-1 text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+              {failedCount}
+            </p>
           </div>
         </div>
 
@@ -380,6 +551,17 @@ function CampaignDetailContent({
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* Polling Toggle */}
+              <label className="flex items-center gap-1.5 text-2xs text-zinc-600 dark:text-zinc-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoPoll}
+                  onChange={(e) => setAutoPoll(e.target.checked)}
+                  className="rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>Auto-poll (5s)</span>
+              </label>
+
               <form onSubmit={handleSearchSubmit} className="relative">
                 <input
                   type="text"

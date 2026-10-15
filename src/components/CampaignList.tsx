@@ -142,3 +142,4 @@ export function CampaignList({ campaigns, onUploadCohort }: CampaignListProps) {
     </div>
   );
 }
+
