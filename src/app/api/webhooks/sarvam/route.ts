@@ -106,12 +106,24 @@ export async function POST(req: NextRequest) {
     const duration = payload.duration_seconds ?? payload.duration ?? callAttempt.durationSeconds ?? 0;
     const failureReason = payload.disconnection_reason || payload.failure_reason;
 
-    // Idempotency check: If call attempt already reached terminal status with same outcome
+    // Idempotency check: If call attempt already reached terminal status with an endedAt timestamp
+    if (callAttempt.endedAt !== null) {
+      return NextResponse.json({
+        success: true,
+        message: "Call attempt already finalized by earlier webhook event",
+        data: {
+          attemptId: callAttempt.id,
+          attemptStatus: callAttempt.status,
+          contactStatus: contact.status,
+          retrying: false,
+        },
+      });
+    }
+
     const targetStatus = mapCallAttemptStatus(payload.status);
     const isShortDuration =
       targetStatus === "ANSWERED" &&
       campaign.retryOnShortDuration &&
-      duration > 0 &&
       duration < campaign.shortDurationThresholdSeconds;
 
     // Update CallAttempt telemetry
@@ -153,10 +165,14 @@ export async function POST(req: NextRequest) {
         newContactStatus = "FAILED";
       }
 
-      // Never retry if campaign has been stopped or cancelled
-      if (campaign.status !== "RUNNING") {
+      // If campaign has been stopped or completed, do not retry
+      if (campaign.status === "CANCELLED" || campaign.status === "COMPLETED") {
         shouldRetry = false;
         newContactStatus = "FAILED";
+      } else if (campaign.status === "PAUSED") {
+        // Paused campaign: do not re-enqueue active jobs right now, retain PENDING for resumption
+        shouldRetry = false;
+        newContactStatus = "PENDING";
       }
     }
 

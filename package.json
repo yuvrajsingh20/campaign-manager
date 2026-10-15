@@ -13,7 +13,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "worker": "tsx src/worker.ts"
+    "worker": "tsx src/worker.ts",
+    "demo": "tsx scripts/demo.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

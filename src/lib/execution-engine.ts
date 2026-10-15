@@ -111,8 +111,29 @@ export async function processOutboundCallJob(
     };
   }
 
-  // 4. Create persistent CallAttempt record in PostgreSQL
+  // 4. Atomically claim contact to prevent duplicate dispatches across concurrent workers
   const attemptNumber = contact.retryCount + 1;
+  const claimResult = await prisma.contact.updateMany({
+    where: {
+      id: contactId,
+      campaignId,
+      status: { in: ["QUEUED", "PENDING"] },
+    },
+    data: {
+      status: "IN_PROGRESS",
+      retryCount: attemptNumber,
+      lastAttemptAt: new Date(),
+    },
+  });
+
+  if (claimResult.count === 0) {
+    return {
+      status: "SKIPPED",
+      reason: `Contact ${contactId} was already claimed or updated by another worker`,
+    };
+  }
+
+  // Create persistent CallAttempt record in PostgreSQL
   const callAttempt = await prisma.callAttempt.create({
     data: {
       campaignId,
@@ -120,16 +141,6 @@ export async function processOutboundCallJob(
       attemptNumber,
       status: "INITIATED",
       startedAt: new Date(),
-    },
-  });
-
-  // Mark contact as IN_PROGRESS
-  await prisma.contact.update({
-    where: { id: contactId },
-    data: {
-      status: "IN_PROGRESS",
-      retryCount: attemptNumber,
-      lastAttemptAt: new Date(),
     },
   });
 
@@ -148,6 +159,7 @@ export async function processOutboundCallJob(
       },
       agent_variables: (contact.customVariables as Record<string, unknown>) || {},
     },
+    app_overrides: (campaign.agentConfig as Record<string, unknown>) || null,
     user_config: {
       user_phone_number: contact.phoneNumber,
     },
@@ -226,3 +238,4 @@ export async function processOutboundCallJob(
     };
   }
 }
+

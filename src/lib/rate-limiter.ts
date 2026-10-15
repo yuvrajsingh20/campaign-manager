@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { redis } from "./redis";
 
 export interface RateLimitResult {
@@ -7,78 +8,82 @@ export interface RateLimitResult {
 }
 
 /**
- * Atomic Lua script implementing a distributed Token Bucket rate limiter in Redis.
+ * Atomic Lua script implementing a distributed Sliding Window Log rate limiter in Redis.
+ *
+ * Guarantees that within ANY rolling window of `windowMs` (default 1000ms), the total
+ * number of admitted requests across ALL campaigns, workers, and processes belonging
+ * to the organization NEVER exceeds `limit`.
  *
  * KEYS[1]: org rate limit key, e.g. "ratelimit:org:{orgId}"
  * ARGV[1]: now (current Unix millisecond timestamp)
- * ARGV[2]: ratePerSecond (number of requests permitted per second)
- * ARGV[3]: burstCapacity (maximum burst bucket capacity)
+ * ARGV[2]: limit (maximum allowed requests per window)
+ * ARGV[3]: windowMs (window duration in milliseconds, typically 1000)
+ * ARGV[4]: memberId (unique identifier for this request)
  *
- * Returns an array: [allowed (1 or 0), retryAfterMs (integer), remainingTokens (float)]
+ * Returns an array: [allowed (1 or 0), retryAfterMs (integer), remainingSlots (integer)]
  */
-const TOKEN_BUCKET_LUA = `
+const SLIDING_WINDOW_LUA = `
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
-local ratePerSec = tonumber(ARGV[2])
-local capacity = tonumber(ARGV[3])
+local limit = tonumber(ARGV[2])
+local windowMs = tonumber(ARGV[3])
+local memberId = ARGV[4]
 
-local ratePerMs = ratePerSec / 1000.0
+-- 1. Remove entries outside the current rolling window [now - windowMs, now]
+local clearBefore = now - windowMs
+redis.call("ZREMRANGEBYSCORE", key, "-inf", clearBefore)
 
-local data = redis.call("HMGET", key, "tokens", "lastUpdated")
-local tokens = tonumber(data[1])
-local lastUpdated = tonumber(data[2])
+-- 2. Count requests currently inside the rolling window
+local currentCount = redis.call("ZCARD", key)
 
-if tokens == nil or lastUpdated == nil then
-  tokens = capacity
-  lastUpdated = now
+if currentCount < limit then
+  -- Admitted: record timestamp in sorted set
+  redis.call("ZADD", key, now, memberId)
+  redis.call("PEXPIRE", key, math.ceil(windowMs * 2))
+  return { 1, 0, limit - currentCount - 1 }
 else
-  local elapsed = now - lastUpdated
-  if elapsed > 0 then
-    tokens = math.min(capacity, tokens + (elapsed * ratePerMs))
-    lastUpdated = now
+  -- Rejected: inspect the oldest timestamp in current window to calculate exact delay
+  local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
+  local waitMs = 100
+  if oldest and oldest[2] then
+    local oldestScore = tonumber(oldest[2])
+    waitMs = math.max(1, math.ceil((oldestScore + windowMs) - now))
   end
-end
-
-if tokens >= 1.0 then
-  tokens = tokens - 1.0
-  redis.call("HMSET", key, "tokens", tokens, "lastUpdated", lastUpdated)
-  redis.call("EXPIRE", key, 60)
-  return { 1, 0, tokens }
-else
-  local needed = 1.0 - tokens
-  local waitMs = math.ceil(needed / ratePerMs)
-  redis.call("HMSET", key, "tokens", tokens, "lastUpdated", lastUpdated)
-  redis.call("EXPIRE", key, 60)
-  return { 0, waitMs, tokens }
+  redis.call("PEXPIRE", key, math.ceil(windowMs * 2))
+  return { 0, waitMs, 0 }
 end
 `;
 
 export class OrgRateLimiter {
   /**
-   * Attempts to consume one request token for an organization.
+   * Attempts to consume one request slot for an organization under a strict rolling 1-second window.
    *
    * @param organizationId - Target organization ID.
    * @param requestsPerSecond - Configured limit for the organization (default 5.0).
-   * @param burstCapacity - Max burst allowed (defaults to requestsPerSecond, min 1).
+   * @param burstCapacity - Optional burst capacity override (defaults to requestsPerSecond, min 1).
+   * @param windowMs - Rolling window duration in milliseconds (default 1000ms).
    */
   public static async acquire(
     organizationId: string,
     requestsPerSecond: number = 5.0,
-    burstCapacity?: number
+    burstCapacity?: number,
+    windowMs: number = 1000
   ): Promise<RateLimitResult> {
-    const rps = Math.max(0.1, requestsPerSecond);
-    const capacity = Math.max(1, burstCapacity ?? rps);
+    const rps = Math.max(1, Math.floor(requestsPerSecond));
+    const limit = Math.max(1, burstCapacity ? Math.floor(burstCapacity) : rps);
     const key = `ratelimit:org:${organizationId}`;
     const now = Date.now();
+    const memberId = `${now}_${randomUUID().substring(0, 8)}`;
 
     try {
       const res = (await redis.eval(
-        TOKEN_BUCKET_LUA,
+        SLIDING_WINDOW_LUA,
         1,
         key,
         now.toString(),
-        rps.toString(),
-        capacity.toString()
+        limit.toString(),
+        windowMs.toString(),
+        memberId
       )) as [number, number, number];
 
       const allowed = res[0] === 1;
@@ -95,16 +100,17 @@ export class OrgRateLimiter {
         `[OrgRateLimiter] Redis error evaluating rate limit for org ${organizationId}:`,
         error
       );
-      // Security & Safety: Fail-closed so worker cannot flood downstream provider when Redis fails
+      // Security & Safety: Fail-closed so workers cannot flood downstream telephony provider when Redis fails
       return {
         allowed: false,
         retryAfterMs: 1000,
+        remainingTokens: 0,
       };
     }
   }
 
   /**
-   * Blocks and waits until a rate limit token is acquired, or until timeoutMs expires.
+   * Blocks and waits until a rate limit slot is acquired, or until timeoutMs expires.
    */
   public static async waitForToken(
     organizationId: string,

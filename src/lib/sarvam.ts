@@ -9,6 +9,7 @@ export interface SarvamOutboundPayload {
     };
     agent_variables?: Record<string, unknown> | null;
   };
+  app_overrides?: Record<string, unknown> | null;
   user_config: {
     user_phone_number: string;
   };
@@ -185,3 +186,4 @@ export class SarvamClient {
 }
 
 export const sarvamClient = new SarvamClient();
+

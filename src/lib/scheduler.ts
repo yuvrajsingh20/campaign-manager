@@ -139,3 +139,4 @@ export function isCallingWindowOpen(
 
   return { isAllowed: true };
 }
+

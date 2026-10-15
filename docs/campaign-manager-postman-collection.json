@@ -1,0 +1,205 @@
+{
+  "info": {
+    "name": "Campaign Manager API Collection",
+    "description": "Comprehensive Postman collection for the Campaign Manager outbound AI voice calling platform.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Campaigns",
+      "item": [
+        {
+          "name": "List Campaigns",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns?page=1&limit=20&status=RUNNING",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "status", "value": "RUNNING" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Campaign",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Enterprise Q4 Renewal Outreach\",\n  \"description\": \"Outbound AI voice campaign for subscription renewals\",\n  \"workspaceId\": \"{{workspaceId}}\",\n  \"agentAppId\": \"agent_retention_v2\",\n  \"agentVersion\": \"v1.0\",\n  \"agentType\": \"outbound_voice\",\n  \"connectionId\": \"conn_telnyx_01\",\n  \"callerPhoneNumber\": \"+14155552671\",\n  \"maxRequestsPerSecond\": 5,\n  \"dailyStartTime\": \"09:00\",\n  \"dailyEndTime\": \"18:00\",\n  \"timezone\": \"America/New_York\",\n  \"allowedDays\": [\"MONDAY\", \"TUESDAY\", \"WEDNESDAY\", \"THURSDAY\", \"FRIDAY\"],\n  \"maxRetries\": 3,\n  \"retryIntervalMinutes\": 15,\n  \"retryOnBusy\": true,\n  \"retryOnNoAnswer\": true,\n  \"retryOnShortDuration\": true,\n  \"shortDurationThresholdSeconds\": 12,\n  \"requiredVariables\": [\"account_tier\", \"renewal_discount\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns"]
+            }
+          }
+        },
+        {
+          "name": "Get Campaign Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}?page=1&limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Campaign (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"maxRequestsPerSecond\": 8,\n  \"retryIntervalMinutes\": 20\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Campaign Lifecycle",
+      "item": [
+        {
+          "name": "Start Campaign",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}", "start"]
+            }
+          }
+        },
+        {
+          "name": "Pause Campaign",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}", "pause"]
+            }
+          }
+        },
+        {
+          "name": "Resume Campaign",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}", "resume"]
+            }
+          }
+        },
+        {
+          "name": "Stop Campaign",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}/stop",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}", "stop"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Contacts & Cohorts",
+      "item": [
+        {
+          "name": "Download Sample CSV Template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}/contacts/sample",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}", "contacts", "sample"]
+            }
+          }
+        },
+        {
+          "name": "Upload Cohort CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}/contacts/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "campaigns", "{{campaignId}}", "contacts", "upload"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Sarvam Telephony Outcome Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-webhook-secret", "value": "{{webhookSecret}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"attempt_id\": \"mock_att_example_123\",\n  \"status\": \"completed\",\n  \"duration_seconds\": 45,\n  \"disconnection_reason\": \"Normal call clearing\",\n  \"recording_url\": \"https://storage.example.com/recordings/call_123.wav\",\n  \"transcript\": \"Hello, this is regarding your upcoming subscription renewal...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/sarvam",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "webhooks", "sarvam"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "workspaceId", "value": "default_workspace_id" },
+    { "key": "campaignId", "value": "default_campaign_id" },
+    { "key": "webhookSecret", "value": "local-dev-webhook-secret" }
+  ]
+}

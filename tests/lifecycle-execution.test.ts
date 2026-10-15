@@ -17,8 +17,8 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   before(async () => {
     const org = await prisma.organization.upsert({
       where: { slug: "acme-corp" },
-      update: {},
-      create: { name: "Acme Corporation", slug: "acme-corp", rateLimitPerMinute: 60 },
+      update: { rateLimitPerMinute: 600 },
+      create: { name: "Acme Corporation", slug: "acme-corp", rateLimitPerMinute: 600 },
     });
 
     const ws = await prisma.workspace.upsert({
@@ -39,6 +39,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
         dailyEndTime: "23:59",
         timezone: "UTC",
         allowedDays: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
+        maxRequestsPerSecond: 10,
         maxRetries: 2,
         retryIntervalMinutes: 5,
         retryOnBusy: true,
@@ -348,6 +349,102 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
 
     const contactAfter = await prisma.contact.findUnique({ where: { id: testContactId } });
     assert.equal(contactAfter?.status, "FAILED");
+
+    // Duplicate webhook delivery test: Send same webhook again with fresh request instance
+    const dupReq = new NextRequest("http://localhost:3000/api/webhooks/sarvam", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(webhookPayload),
+    });
+    const dupRes = await handleWebhook(dupReq);
+    const dupBody = await dupRes.json();
+    assert.equal(dupRes.status, 200);
+    assert.equal(dupBody.success, true);
+    assert.equal(dupBody.data.retrying, false);
+    assert.match(dupBody.message, /already finalized/i);
+  });
+
+  test("Short duration call triggers retry when retryOnShortDuration is enabled", async () => {
+    // Configure campaign for short duration retries
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { retryOnShortDuration: true, shortDurationThresholdSeconds: 15 },
+    });
+
+    const shortContact = await prisma.contact.create({
+      data: {
+        campaignId,
+        workspaceId: (await prisma.campaign.findUnique({ where: { id: campaignId } }))!.workspaceId,
+        phoneNumber: "+919876543299",
+        status: "IN_PROGRESS",
+        retryCount: 0,
+      },
+    });
+
+    const shortAttempt = await prisma.callAttempt.create({
+      data: {
+        campaignId,
+        contactId: shortContact.id,
+        attemptNumber: 1,
+        externalCallId: "mock_att_short_dur_" + Date.now(),
+        status: "RINGING",
+      },
+    });
+
+    const webhookPayload = {
+      attempt_id: shortAttempt.externalCallId!,
+      status: "answered",
+      duration_seconds: 5, // < 15 seconds threshold
+    };
+
+    const req = new NextRequest("http://localhost:3000/api/webhooks/sarvam", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(webhookPayload),
+    });
+
+    const res = await handleWebhook(req);
+    const body = await res.json();
+
+    assert.equal(res.status, 200);
+    assert.equal(body.data.attemptStatus, "ANSWERED");
+    assert.equal(body.data.retrying, true, "Short duration call should be retried");
+    assert.equal(body.data.contactStatus, "QUEUED");
+  });
+
+  test("Atomic worker claim prevents duplicate dispatches between parallel workers", async () => {
+    const ws = (await prisma.campaign.findUnique({ where: { id: campaignId } }))!.workspaceId;
+    const raceContact = await prisma.contact.create({
+      data: {
+        campaignId,
+        workspaceId: ws,
+        phoneNumber: "+919876543255",
+        status: "QUEUED",
+        retryCount: 0,
+      },
+    });
+
+    // Simulate 2 parallel workers picking up the same job simultaneously
+    const jobData = {
+      campaignId,
+      contactId: raceContact.id,
+      attemptNumber: 1,
+    };
+
+    const [workerA, workerB] = await Promise.all([
+      processOutboundCallJob(jobData),
+      processOutboundCallJob(jobData),
+    ]);
+
+    const statuses = [workerA.status, workerB.status];
+    assert.ok(statuses.includes("DISPATCHED"), "One worker must successfully dispatch");
+    assert.ok(statuses.includes("SKIPPED"), "Second concurrent worker must be skipped");
+
+    // Verify only 1 CallAttempt was created
+    const attempts = await prisma.callAttempt.findMany({
+      where: { contactId: raceContact.id },
+    });
+    assert.equal(attempts.length, 1, "Only one CallAttempt must be created despite parallel workers");
   });
 
   test("Stop transitions campaign to CANCELLED and halts all retries", async () => {

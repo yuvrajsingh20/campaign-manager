@@ -54,12 +54,23 @@ describe("Organisation-Wide Distributed Rate Limiter", () => {
     assert.equal(orgBAllowed, 5, "Org B should receive its full bucket independently of Org A");
   });
 
-  test("Tokens refill over time based on elapsed milliseconds", async () => {
-    // Wait 250ms for Org A to replenish at least 1 token (5 tokens/sec = 1 token per 200ms)
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  test("Tokens refill over time based on elapsed sliding window", async () => {
+    const orgRefill = "test_org_refill_" + Date.now();
+    // Test with a 200ms window
+    const firstRes = await OrgRateLimiter.acquire(orgRefill, 1, 1, 200);
+    assert.equal(firstRes.allowed, true, "First request in window must be allowed");
 
-    const res = await OrgRateLimiter.acquire(orgA, 5, 5);
-    assert.equal(res.allowed, true, "Token should be replenished after elapsed time window");
+    const secondRes = await OrgRateLimiter.acquire(orgRefill, 1, 1, 200);
+    assert.equal(secondRes.allowed, false, "Immediate second request must be denied");
+    assert.ok(secondRes.retryAfterMs > 0, "Must specify remaining wait time");
+
+    // Wait 220ms for window to slide past the first request
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    const thirdRes = await OrgRateLimiter.acquire(orgRefill, 1, 1, 200);
+    assert.equal(thirdRes.allowed, true, "Request must be allowed after window slides past");
+
+    await redis.del(`ratelimit:org:${orgRefill}`);
   });
 
   test("Handles concurrent acquisition across simulated parallel workers without exceeding limit", async () => {
@@ -80,5 +91,24 @@ describe("Organisation-Wide Distributed Rate Limiter", () => {
     assert.equal(denied, 20, "Excess concurrent requests must be denied");
 
     await redis.del(`ratelimit:org:${concurrentOrg}`);
+  });
+
+  test("Strict rolling one-second enforcement never allows bursts above limit", async () => {
+    const strictOrg = "test_org_strict_" + Date.now();
+    const limit = 5;
+
+    // Consume all 5 slots
+    for (let i = 0; i < limit; i++) {
+      const res = await OrgRateLimiter.acquire(strictOrg, limit, limit, 1000);
+      assert.equal(res.allowed, true);
+    }
+
+    // Next 10 attempts inside the same second must ALL be denied
+    for (let i = 0; i < 10; i++) {
+      const res = await OrgRateLimiter.acquire(strictOrg, limit, limit, 1000);
+      assert.equal(res.allowed, false, "Must not allow bursts above 5 requests per second");
+    }
+
+    await redis.del(`ratelimit:org:${strictOrg}`);
   });
 });
