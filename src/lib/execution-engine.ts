@@ -158,6 +158,7 @@ export async function processOutboundCallJob(
         agent_phone_number: campaign.callerPhoneNumber || "+10000000000",
       },
       agent_variables: (contact.customVariables as Record<string, unknown>) || {},
+      app_overrides: (campaign.agentConfig as Record<string, unknown>) || null,
     },
     app_overrides: (campaign.agentConfig as Record<string, unknown>) || null,
     user_config: {

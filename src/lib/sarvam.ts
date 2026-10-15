@@ -8,6 +8,7 @@ export interface SarvamOutboundPayload {
       agent_phone_number: string;
     };
     agent_variables?: Record<string, unknown> | null;
+    app_overrides?: Record<string, unknown> | null;
   };
   app_overrides?: Record<string, unknown> | null;
   user_config: {
@@ -47,12 +48,17 @@ export class SarvamClient {
     this.baseUrl =
       options?.baseUrl || process.env.SARVAM_API_BASE_URL || "https://apps.sarvam.ai";
     // Check if explicitly passed or set in environment
-    this.isMockMode =
-      options?.mockMode ??
-      (process.env.SARVAM_MOCK_MODE === "true" ||
+    if (options?.mockMode !== undefined) {
+      this.isMockMode = options.mockMode;
+    } else if (process.env.SARVAM_MOCK_MODE === "false") {
+      this.isMockMode = false;
+    } else {
+      this.isMockMode =
+        process.env.SARVAM_MOCK_MODE === "true" ||
         process.env.NODE_ENV === "test" ||
         !this.apiKey ||
-        this.apiKey === "your-sarvam-api-key-here");
+        this.apiKey === "your-sarvam-api-key-here";
+    }
   }
 
   /**

@@ -107,7 +107,7 @@ export async function enqueueContactRetry(
       attemptNumber,
     },
     {
-      jobId: `job_${campaignId}_${contactId}_att${attemptNumber}`,
+      jobId: `job_${campaignId}_${contactId}_att${attemptNumber}_${Date.now()}`,
       delay: Math.max(0, delayMs),
     }
   );

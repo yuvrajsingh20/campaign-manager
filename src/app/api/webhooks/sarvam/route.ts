@@ -30,7 +30,7 @@ interface SarvamWebhookEvent {
  */
 function mapCallAttemptStatus(status: string): CallAttemptStatus {
   const s = status.toLowerCase();
-  if (s === "completed" || s === "answered" || s === "success") return "ANSWERED";
+  if (s === "completed" || s === "answered" || s === "success" || s === "connected") return "ANSWERED";
   if (s === "busy") return "BUSY";
   if (s === "no_answer" || s === "no-answer" || s === "timeout") return "NO_ANSWER";
   if (s === "voicemail") return "VOICEMAIL";
