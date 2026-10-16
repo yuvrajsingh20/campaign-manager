@@ -1,8 +1,17 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { X, UploadCloud, Download, CheckCircle, AlertTriangle, AlertCircle, Loader2 } from "lucide-react";
+import {
+  UploadCloud,
+  Download,
+  CheckCircle2,
+  AlertTriangle,
+  AlertCircle,
+  FileSpreadsheet,
+} from "lucide-react";
 import { CohortUploadSummary } from "@/types";
+import { Modal } from "./ui/Modal";
+import { Button } from "./ui/Button";
 
 interface UploadCohortModalProps {
   isOpen: boolean;
@@ -73,68 +82,98 @@ export function UploadCohortModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="relative bg-white dark:bg-zinc-900 rounded-xl shadow-xl border border-zinc-200 dark:border-zinc-800 max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between pb-4 border-b border-zinc-200 dark:border-zinc-800">
-          <div>
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              Upload Customer Cohort
-            </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Campaign: <span className="font-medium text-zinc-800 dark:text-zinc-200">{campaignName}</span>
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 p-1 rounded-lg"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  const handleResetAndClose = () => {
+    setFile(null);
+    setErrorMessage(null);
+    setSummary(null);
+    onClose();
+  };
 
-        {/* Required Variables & Sample Download Banner */}
-        <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-blue-900 dark:text-blue-200">
-          <div>
-            <p className="font-semibold">Required columns: phone_number</p>
-            {requiredVariables.length > 0 && (
-              <p className="text-blue-700 dark:text-blue-300 mt-0.5">
-                Agent variables: {requiredVariables.join(", ")}
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={handleResetAndClose}
+      title="Upload contact cohort"
+      description={`Add audience records to campaign "${campaignName}"`}
+      maxWidth="2xl"
+    >
+      <div className="space-y-5">
+        {/* Required Variables & Template Banner */}
+        <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs">
+          <div className="space-y-1">
+            <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+              <span>Required header:</span>
+              <code className="bg-slate-200 text-slate-800 px-1.5 py-0.5 rounded font-mono">
+                phone_number
+              </code>
+            </div>
+            {requiredVariables.length > 0 ? (
+              <p className="text-slate-500">
+                Agent dynamic variables:{" "}
+                <strong className="text-slate-700">
+                  {requiredVariables.join(", ")}
+                </strong>
+              </p>
+            ) : (
+              <p className="text-slate-500">
+                Optional columns: lead_id, first_name, last_name
               </p>
             )}
           </div>
           <a
             href={`/api/campaigns/${campaignId}/contacts/sample`}
             download
-            className="inline-flex items-center px-3 py-1.5 rounded-md bg-white dark:bg-zinc-800 text-blue-700 dark:text-blue-300 font-medium border border-blue-300 dark:border-blue-800 hover:bg-blue-100 transition-colors shadow-2xs shrink-0"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 font-medium border border-slate-300 rounded-lg shadow-2xs transition-colors shrink-0"
           >
-            <Download className="w-3.5 h-3.5 mr-1.5" />
-            Download Sample CSV
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            Download template CSV
           </a>
         </div>
 
         {errorMessage && (
-          <div className="mt-4 p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage}</span>
+          <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2.5 text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+            <div>
+              <span className="font-semibold">Upload error:</span> {errorMessage}
+            </div>
           </div>
         )}
 
         {/* Upload form */}
         {!summary ? (
-          <form onSubmit={handleUpload} className="mt-4 space-y-4">
+          <form onSubmit={handleUpload} className="space-y-4">
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-colors"
+              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                file
+                  ? "border-blue-400 bg-blue-50/20"
+                  : "border-slate-300 hover:border-blue-400 hover:bg-slate-50/60"
+              }`}
             >
-              <UploadCloud className="w-10 h-10 text-zinc-400 mx-auto" />
-              <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                {file ? file.name : "Click to select a CSV file"}
-              </p>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                CSV up to 5MB, with phone_number, optional lead_id, and prompt variables
-              </p>
+              {file ? (
+                <div className="space-y-2">
+                  <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center mx-auto">
+                    <FileSpreadsheet className="w-6 h-6" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-900">{file.name}</p>
+                  <p className="text-xs text-slate-500">
+                    {(file.size / 1024).toFixed(1)} KB • Click to choose a different file
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center mx-auto">
+                    <UploadCloud className="w-6 h-6 text-slate-600" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    Click to browse or drop CSV file
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Maximum recommended batch size: 10,000 rows
+                  </p>
+                </div>
+              )}
+
               <input
                 ref={fileInputRef}
                 type="file"
@@ -144,98 +183,97 @@ export function UploadCohortModal({
               />
             </div>
 
-            <div className="pt-2 flex items-center justify-end space-x-3">
-              <button
+            <div className="flex justify-end gap-2.5 pt-2">
+              <Button
                 type="button"
-                onClick={onClose}
-                disabled={uploading}
-                className="px-4 py-2 text-sm font-medium rounded-lg text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                variant="secondary"
+                onClick={handleResetAndClose}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 type="submit"
-                disabled={!file || uploading}
-                className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                variant="primary"
+                disabled={!file}
+                isLoading={uploading}
+                icon={<UploadCloud className="w-4 h-4" />}
               >
-                {uploading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {uploading ? "Parsing & Importing..." : "Upload & Validate"}
-              </button>
+                Upload and validate contacts
+              </Button>
             </div>
           </form>
         ) : (
-          /* Upload Summary */
-          <div className="mt-4 space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700 text-center">
-                <p className="text-xs text-zinc-500">Processed</p>
-                <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-                  {summary.totalRowsProcessed}
-                </p>
+          /* Summary view */
+          <div className="space-y-4 text-xs">
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>Upload complete</span>
               </div>
 
-              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg border border-emerald-200 dark:border-emerald-800 text-center">
-                <p className="text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-center gap-1">
-                  <CheckCircle className="w-3 h-3" /> Accepted
-                </p>
-                <p className="text-xl font-bold text-emerald-800 dark:text-emerald-200">
-                  {summary.acceptedRows}
-                </p>
-              </div>
-
-              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-lg border border-amber-200 dark:border-amber-800 text-center">
-                <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center justify-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> Duplicates
-                </p>
-                <p className="text-xl font-bold text-amber-800 dark:text-amber-200">
-                  {summary.duplicatesSkipped}
-                </p>
-              </div>
-
-              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-800 text-center">
-                <p className="text-xs text-rose-700 dark:text-rose-300 flex items-center justify-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> Rejected
-                </p>
-                <p className="text-xl font-bold text-rose-800 dark:text-rose-200">
-                  {summary.rejectedRows}
-                </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                <div className="bg-white border border-slate-200 rounded-lg p-2.5 text-center shadow-2xs">
+                  <span className="text-slate-500 block text-[11px]">Processed</span>
+                  <strong className="text-base font-semibold text-slate-900">
+                    {summary.totalRowsProcessed}
+                  </strong>
+                </div>
+                <div className="bg-white border border-emerald-200 rounded-lg p-2.5 text-center shadow-2xs">
+                  <span className="text-emerald-700 block text-[11px]">Accepted</span>
+                  <strong className="text-base font-semibold text-emerald-700">
+                    {summary.acceptedRows}
+                  </strong>
+                </div>
+                <div className="bg-white border border-amber-200 rounded-lg p-2.5 text-center shadow-2xs">
+                  <span className="text-amber-700 block text-[11px]">Duplicates</span>
+                  <strong className="text-base font-semibold text-amber-700">
+                    {summary.duplicatesSkipped}
+                  </strong>
+                </div>
+                <div className="bg-white border border-rose-200 rounded-lg p-2.5 text-center shadow-2xs">
+                  <span className="text-rose-700 block text-[11px]">Rejected</span>
+                  <strong className="text-base font-semibold text-rose-700">
+                    {summary.rejectedRows}
+                  </strong>
+                </div>
               </div>
             </div>
 
-            {summary.errors.length > 0 && (
+            {/* Error Breakdown if any */}
+            {summary.errors && summary.errors.length > 0 && (
               <div className="space-y-2">
-                <h4 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
-                  Validation & Duplication Notices ({summary.errors.length})
-                </h4>
-                <div className="max-h-48 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800 divide-y divide-zinc-200 dark:divide-zinc-800">
+                <div className="flex items-center gap-1.5 font-semibold text-rose-800 text-xs">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Validation issues ({summary.errors.length} rows)</span>
+                </div>
+                <div className="max-h-40 overflow-y-auto border border-rose-200 bg-rose-50/50 rounded-lg divide-y divide-rose-100 text-xs">
                   {summary.errors.map((err, i) => (
-                    <div key={i} className="p-2.5 text-xs flex items-start gap-2 bg-white dark:bg-zinc-900">
-                      <span className="font-mono px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                        Row {err.row}
+                    <div key={i} className="p-2 flex items-start gap-2">
+                      <span className="font-semibold text-rose-900 shrink-0">
+                        Row {err.row}:
                       </span>
-                      <div>
-                        <p className="font-medium text-rose-600 dark:text-rose-400">{err.error}</p>
-                        {err.details && <p className="text-zinc-500 mt-0.5">{err.details}</p>}
-                      </div>
+                      <span className="text-rose-800">
+                        {err.error}
+                        {err.details ? ` (${err.details})` : ""}
+                      </span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            <div className="pt-2 flex justify-end">
-              <button
+            <div className="flex justify-end pt-2">
+              <Button
                 type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+                variant="primary"
+                onClick={handleResetAndClose}
               >
                 Done
-              </button>
+              </Button>
             </div>
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
-

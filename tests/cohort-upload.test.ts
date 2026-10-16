@@ -2,43 +2,71 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { prisma } from "../src/lib/prisma";
+import { randomUUID } from "node:crypto";
 import { POST as uploadCohort } from "../src/app/api/campaigns/[id]/contacts/upload/route";
 import { GET as downloadSample } from "../src/app/api/campaigns/[id]/contacts/sample/route";
 
 describe("CSV Cohort Upload and Sample Download", () => {
   let campaignId: string;
   let sessionCookie: string;
+  let testSessionToken: string;
 
   before(async () => {
-    const org = await prisma.organization.upsert({
+    let org = await prisma.organization.findUnique({
       where: { slug: "acme-corp" },
-      update: {},
-      create: { name: "Acme Corporation", slug: "acme-corp" },
-    });
-
-    const ws = await prisma.workspace.upsert({
-      where: {
-        organizationId_slug: { organizationId: org.id, slug: "default" },
-      },
-      update: {},
-      create: { name: "Default Workspace", slug: "default", organizationId: org.id },
-    });
-
-    const user = await prisma.user.upsert({
-      where: { email: "admin@acme.com" },
-      update: { organizationId: org.id },
-      create: {
-        email: "admin@acme.com",
-        name: "Admin User",
-        role: "OWNER",
-        organizationId: org.id,
+      include: {
+        workspaces: { where: { slug: "default" } },
+        users: { where: { email: "admin@acme.com" } },
       },
     });
 
+    if (!org) {
+      org = await prisma.organization.create({
+        data: {
+          name: "Acme Corporation",
+          slug: "acme-corp",
+          workspaces: {
+            create: { name: "Default Workspace", slug: "default" },
+          },
+          users: {
+            create: {
+              email: "admin@acme.com",
+              name: "Admin User",
+              role: "OWNER",
+            },
+          },
+        },
+        include: {
+          workspaces: true,
+          users: true,
+        },
+      });
+    }
+
+    let ws = org.workspaces[0];
+    if (!ws) {
+      ws = await prisma.workspace.create({
+        data: { name: "Default Workspace", slug: "default", organizationId: org.id },
+      });
+    }
+
+    let user = org.users[0];
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: "admin@acme.com",
+          name: "Admin User",
+          role: "OWNER",
+          organizationId: org.id,
+        },
+      });
+    }
+
+    testSessionToken = `test-cohort-${randomUUID()}`;
     const session = await prisma.session.create({
       data: {
         userId: user.id,
-        sessionToken: "test_token_cohort_upload",
+        sessionToken: testSessionToken,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -57,12 +85,18 @@ describe("CSV Cohort Upload and Sample Download", () => {
   });
 
   after(async () => {
-    if (campaignId) {
-      await prisma.contact.deleteMany({ where: { campaignId } });
-      await prisma.campaign.deleteMany({ where: { id: campaignId } });
+    try {
+      if (campaignId) {
+        await prisma.contact.deleteMany({ where: { campaignId } });
+        await prisma.callAttempt.deleteMany({ where: { campaignId } });
+        await prisma.campaign.deleteMany({ where: { id: campaignId } });
+      }
+      if (testSessionToken) {
+        await prisma.session.deleteMany({ where: { sessionToken: testSessionToken } });
+      }
+    } finally {
+      await Promise.race([prisma.$disconnect(), new Promise((r) => setTimeout(r, 1000))]);
     }
-    await prisma.session.deleteMany({ where: { sessionToken: "test_token_cohort_upload" } });
-    await prisma.$disconnect();
   });
 
   function createMultipartRequest(url: string, csvContent: string): NextRequest {

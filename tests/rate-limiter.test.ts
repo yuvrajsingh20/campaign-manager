@@ -13,8 +13,14 @@ describe("Organisation-Wide Distributed Rate Limiter", () => {
   });
 
   after(async () => {
-    await redis.del(`ratelimit:org:${orgA}`, `ratelimit:org:${orgB}`);
-    await redis.quit();
+    try {
+      await redis.del(`ratelimit:org:${orgA}`, `ratelimit:org:${orgB}`);
+    } finally {
+      if (redis.status === "ready" || redis.status === "connecting") {
+        await Promise.race([redis.quit(), new Promise((r) => setTimeout(r, 1000))]);
+      }
+      redis.disconnect();
+    }
   });
 
   test("Rate limiter enforces capacity and rejects when tokens exhausted", async () => {
@@ -111,4 +117,40 @@ describe("Organisation-Wide Distributed Rate Limiter", () => {
 
     await redis.del(`ratelimit:org:${strictOrg}`);
   });
+
+  test("Boundary conditions: Zero or negative RPS fails safely without unhandled errors", async () => {
+    const boundaryOrg = "test_org_zero_" + Date.now();
+    const zeroRes = await OrgRateLimiter.acquire(boundaryOrg, 0);
+    assert.equal(zeroRes.allowed, false);
+
+    const negRes = await OrgRateLimiter.acquire(boundaryOrg, -5);
+    assert.equal(negRes.allowed, false);
+  });
+
+  test("Boundary conditions: Fractional RPS (0.5 req/sec) enforces 2000ms window without rounding up", async () => {
+    const fracOrg = "test_org_frac_" + Date.now();
+    const firstRes = await OrgRateLimiter.acquire(fracOrg, 0.5);
+    assert.equal(firstRes.allowed, true, "First request at 0.5 RPS must be allowed");
+
+    const secondRes = await OrgRateLimiter.acquire(fracOrg, 0.5);
+    assert.equal(secondRes.allowed, false, "Second immediate request must be rejected under 0.5 RPS");
+    assert.ok(secondRes.retryAfterMs > 0, "Wait time must reflect remaining window");
+
+    await redis.del(`ratelimit:org:${fracOrg}`);
+  });
+
+  test("waitForToken: Successfully acquires token or times out gracefully", async () => {
+    const waitOrg = "test_org_wait_" + Date.now();
+    // Immediate acquisition when tokens available
+    const acquired = await OrgRateLimiter.waitForToken(waitOrg, 5, 2000);
+    assert.equal(acquired, true, "waitForToken should succeed when slots are open");
+
+    // Timeout when RPS is zero
+    const timedOut = await OrgRateLimiter.waitForToken(waitOrg, 0, 300);
+    assert.equal(timedOut, false, "waitForToken should return false when limit is zero and timeout elapses");
+
+    await redis.del(`ratelimit:org:${waitOrg}`);
+  });
 });
+
+

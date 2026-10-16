@@ -4,7 +4,8 @@ import { redis } from "./redis";
 export interface RateLimitResult {
   allowed: boolean;
   retryAfterMs: number;
-  remainingTokens?: number;
+  remainingSlots?: number;
+  remainingTokens?: number; // Alias for backward compatibility
 }
 
 /**
@@ -56,11 +57,11 @@ end
 
 export class OrgRateLimiter {
   /**
-   * Attempts to consume one request slot for an organization under a strict rolling 1-second window.
+   * Attempts to consume one request slot for an organization under an atomic sliding window log.
    *
    * @param organizationId - Target organization ID.
-   * @param requestsPerSecond - Configured limit for the organization (default 5.0).
-   * @param burstCapacity - Optional burst capacity override (defaults to requestsPerSecond, min 1).
+   * @param requestsPerSecond - Configured limit for the organization (e.g. 5.0, 8.5, 0.5).
+   * @param burstCapacity - Optional burst capacity override.
    * @param windowMs - Rolling window duration in milliseconds (default 1000ms).
    */
   public static async acquire(
@@ -69,8 +70,34 @@ export class OrgRateLimiter {
     burstCapacity?: number,
     windowMs: number = 1000
   ): Promise<RateLimitResult> {
-    const rps = Math.max(1, Math.floor(requestsPerSecond));
-    const limit = Math.max(1, burstCapacity ? Math.floor(burstCapacity) : rps);
+    if (requestsPerSecond <= 0) {
+      return {
+        allowed: false,
+        retryAfterMs: 1000,
+        remainingSlots: 0,
+        remainingTokens: 0,
+      };
+    }
+
+    let effectiveLimit: number;
+    let effectiveWindowMs: number;
+
+    if (burstCapacity !== undefined && burstCapacity > 0) {
+      effectiveLimit = Math.max(1, Math.round(burstCapacity));
+      effectiveWindowMs = windowMs;
+    } else if (requestsPerSecond < 1) {
+      // Sub-1 RPS: e.g. 0.5 req/sec -> 1 request per 2000ms window without rounding up to 1 RPS
+      effectiveLimit = 1;
+      effectiveWindowMs = Math.max(100, Math.round(1000 / requestsPerSecond));
+    } else if (requestsPerSecond % 1 !== 0 && windowMs === 1000) {
+      // Decimal RPS: e.g. 8.5 req/sec -> 17 requests per 2000ms window
+      effectiveLimit = Math.round(requestsPerSecond * 2);
+      effectiveWindowMs = 2000;
+    } else {
+      effectiveLimit = Math.max(1, Math.round(requestsPerSecond * (windowMs / 1000)));
+      effectiveWindowMs = windowMs;
+    }
+
     const key = `ratelimit:org:${organizationId}`;
     const now = Date.now();
     const memberId = `${now}_${randomUUID().substring(0, 8)}`;
@@ -81,19 +108,20 @@ export class OrgRateLimiter {
         1,
         key,
         now.toString(),
-        limit.toString(),
-        windowMs.toString(),
+        effectiveLimit.toString(),
+        effectiveWindowMs.toString(),
         memberId
       )) as [number, number, number];
 
       const allowed = res[0] === 1;
       const retryAfterMs = res[1];
-      const remainingTokens = res[2];
+      const remainingSlots = res[2];
 
       return {
         allowed,
         retryAfterMs,
-        remainingTokens,
+        remainingSlots,
+        remainingTokens: remainingSlots,
       };
     } catch (error) {
       console.error(
@@ -104,6 +132,7 @@ export class OrgRateLimiter {
       return {
         allowed: false,
         retryAfterMs: 1000,
+        remainingSlots: 0,
         remainingTokens: 0,
       };
     }

@@ -1,49 +1,77 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { prisma } from "../src/lib/prisma";
+import { redis } from "../src/lib/redis";
 import { POST as createCampaign, GET as listCampaigns } from "../src/app/api/campaigns/route";
 import { GET as getCampaign, PATCH as updateCampaign } from "../src/app/api/campaigns/[id]/route";
+import { GET as getHealth } from "../src/app/api/health/route";
 
 describe("Campaign REST APIs", () => {
   let workspaceId: string;
   let createdCampaignId: string;
   let sessionCookie: string;
+  let testSessionToken: string;
 
   before(async () => {
-    // Ensure default org and workspace exist
-    const org = await prisma.organization.upsert({
+    // Ensure default org and workspace exist, reusing existing setup safely
+    let org = await prisma.organization.findUnique({
       where: { slug: "acme-corp" },
-      update: {},
-      create: { name: "Acme Corporation", slug: "acme-corp" },
-    });
-
-    const ws = await prisma.workspace.upsert({
-      where: {
-        organizationId_slug: { organizationId: org.id, slug: "default" },
+      include: {
+        workspaces: { where: { slug: "default" } },
+        users: { where: { email: "admin@acme.com" } },
       },
-      update: {},
-      create: { name: "Default Workspace", slug: "default", organizationId: org.id },
     });
 
+    if (!org) {
+      org = await prisma.organization.create({
+        data: {
+          name: "Acme Corporation",
+          slug: "acme-corp",
+          workspaces: {
+            create: { name: "Default Workspace", slug: "default" },
+          },
+          users: {
+            create: {
+              email: "admin@acme.com",
+              name: "Admin User",
+              role: "OWNER",
+            },
+          },
+        },
+        include: {
+          workspaces: true,
+          users: true,
+        },
+      });
+    }
+
+    let ws = org.workspaces[0];
+    if (!ws) {
+      ws = await prisma.workspace.create({
+        data: { name: "Default Workspace", slug: "default", organizationId: org.id },
+      });
+    }
     workspaceId = ws.id;
 
-    // Create session for authenticated tenant user
-    const user = await prisma.user.upsert({
-      where: { email: "admin@acme.com" },
-      update: { organizationId: org.id },
-      create: {
-        email: "admin@acme.com",
-        name: "Admin User",
-        role: "OWNER",
-        organizationId: org.id,
-      },
-    });
+    let user = org.users[0];
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: "admin@acme.com",
+          name: "Admin User",
+          role: "OWNER",
+          organizationId: org.id,
+        },
+      });
+    }
 
+    testSessionToken = `test-session-${randomUUID()}`;
     const session = await prisma.session.create({
       data: {
         userId: user.id,
-        sessionToken: "test_token_campaign_api",
+        sessionToken: testSessionToken,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -51,12 +79,22 @@ describe("Campaign REST APIs", () => {
   });
 
   after(async () => {
-    // Clean up created test campaign and session
-    if (createdCampaignId) {
-      await prisma.campaign.deleteMany({ where: { id: createdCampaignId } });
+    try {
+      if (createdCampaignId) {
+        await prisma.contact.deleteMany({ where: { campaignId: createdCampaignId } });
+        await prisma.callAttempt.deleteMany({ where: { campaignId: createdCampaignId } });
+        await prisma.campaign.deleteMany({ where: { id: createdCampaignId } });
+      }
+      if (testSessionToken) {
+        await prisma.session.deleteMany({ where: { sessionToken: testSessionToken } });
+      }
+    } finally {
+      if (redis.status === "ready" || redis.status === "connecting") {
+        await Promise.race([redis.quit(), new Promise((r) => setTimeout(r, 1000))]);
+      }
+      redis.disconnect();
+      await Promise.race([prisma.$disconnect(), new Promise((r) => setTimeout(r, 1000))]);
     }
-    await prisma.session.deleteMany({ where: { sessionToken: "test_token_campaign_api" } });
-    await prisma.$disconnect();
   });
 
   test("POST /api/campaigns: Valid campaign creation succeeds with 201", async () => {
@@ -231,4 +269,16 @@ describe("Campaign REST APIs", () => {
     assert.equal(body.success, false);
     assert.equal(body.error.code, "NOT_FOUND");
   });
+
+  test("GET /api/health: Returns 200 with database and redis connectivity checks", async () => {
+    const res = await getHealth();
+    const body = await res.json();
+
+    assert.equal(res.status, 200);
+    assert.equal(body.status, "healthy");
+    assert.equal(body.service, "campaign-manager");
+    assert.equal(body.checks.database, "connected");
+    assert.equal(body.checks.redis, "connected");
+  });
 });
+

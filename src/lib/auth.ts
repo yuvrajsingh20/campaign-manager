@@ -7,6 +7,17 @@ import { AuthUser, ApiResponse } from "@/types";
 export const SESSION_COOKIE_NAME = "session_token";
 export const SESSION_EXPIRY_DAYS = 7;
 
+interface CachedSession {
+  user: AuthUser;
+  cachedAt: number;
+}
+const sessionCache = new Map<string, CachedSession>();
+const SESSION_CACHE_TTL_MS = 5000;
+
+export function clearSessionCache(): void {
+  sessionCache.clear();
+}
+
 /**
  * Hash a plaintext password using standard scrypt key derivation.
  */
@@ -35,7 +46,9 @@ export function verifyPassword(password: string, storedHash: string): boolean {
  * Generate a cryptographically random, secure temporary password for onboarded owners.
  */
 export function generateTemporaryPassword(): string {
-  return "12345678";
+  // Generates a 12-character cryptographically secure temporary password (alphanumeric + symbols)
+  const bytes = randomBytes(9);
+  return bytes.toString("base64url");
 }
 
 /**
@@ -60,6 +73,7 @@ export async function createSession(userId: string): Promise<{ sessionToken: str
  * Delete a session from the database (logout).
  */
 export async function deleteSession(sessionToken: string): Promise<void> {
+  sessionCache.delete(sessionToken);
   await prisma.session.deleteMany({
     where: { sessionToken },
   });
@@ -135,6 +149,11 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser | null>
   const token = extractSessionToken(req);
   if (!token) return null;
 
+  const cached = sessionCache.get(token);
+  if (cached && Date.now() - cached.cachedAt < SESSION_CACHE_TTL_MS) {
+    return cached.user;
+  }
+
   const session = await prisma.session.findUnique({
     where: { sessionToken: token },
     include: {
@@ -146,16 +165,20 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser | null>
     },
   });
 
-  if (!session) return null;
+  if (!session) {
+    sessionCache.delete(token);
+    return null;
+  }
 
   // Expired session check
   if (session.expiresAt < new Date()) {
+    sessionCache.delete(token);
     await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
     return null;
   }
 
   const { user } = session;
-  return {
+  const authUser: AuthUser = {
     id: user.id,
     email: user.email,
     name: user.name,
@@ -172,6 +195,9 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser | null>
         }
       : null,
   };
+
+  sessionCache.set(token, { user: authUser, cachedAt: Date.now() });
+  return authUser;
 }
 
 /**

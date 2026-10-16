@@ -158,14 +158,38 @@ export async function processOutboundCallJob(
   const appVersion = SarvamClient.parseAppVersion(campaign.agentVersion);
   const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/webhooks/sarvam`;
 
+  const appId = campaign.agentAppId || campaign.sarvamAgentId;
+  const connId = campaign.connectionId;
+  const callerNumber = campaign.callerPhoneNumber;
+  // Assignment PDF explicitly specifies "app_type": "agent"
+  const appType = campaign.agentType === "outbound_voice" ? "agent" : campaign.agentType || "agent";
+
+  // In live production mode, validate configuration strictly rather than silently substituting fake placeholders
+  const isMock =
+    process.env.SARVAM_MOCK_MODE === "true" ||
+    process.env.NODE_ENV === "test" ||
+    !process.env.SARVAM_API_KEY ||
+    process.env.SARVAM_API_KEY === "your-sarvam-api-key-here";
+
+  if (!isMock && (!appId || !connId || !callerNumber)) {
+    const missing = [
+      !appId && "agentAppId",
+      !connId && "connectionId",
+      !callerNumber && "callerPhoneNumber",
+    ].filter(Boolean);
+    throw new Error(
+      `Cannot dispatch live call: missing required campaign configuration: ${missing.join(", ")}`
+    );
+  }
+
   const payload = {
     app_config: {
-      app_id: campaign.agentAppId || campaign.sarvamAgentId || "default_app",
+      app_id: appId || "mock_app_id",
       app_version: appVersion,
-      app_type: campaign.agentType || "outbound_voice",
+      app_type: appType,
       connection_config: {
-        connection_id: campaign.connectionId || "conn_default",
-        agent_phone_number: campaign.callerPhoneNumber || "+10000000000",
+        connection_id: connId || "mock_conn_id",
+        agent_phone_number: callerNumber || "+10000000000",
       },
       agent_variables: (contact.customVariables as Record<string, unknown>) || {},
       app_overrides: (campaign.agentConfig as Record<string, unknown>) || null,
@@ -223,7 +247,7 @@ export async function processOutboundCallJob(
       },
     });
 
-    // If dispatch failure is definitive (e.g. invalid phone number / 4xx), check retries
+    // Handle retries & contact state safely without stranding contacts in IN_PROGRESS
     if (!isAmbiguous) {
       if (attemptNumber < campaign.maxRetries) {
         const backoffMs = campaign.retryIntervalMinutes * 60 * 1000;
@@ -241,6 +265,26 @@ export async function processOutboundCallJob(
           data: { status: "FAILED" },
         });
       }
+    } else {
+      // Ambiguous dispatch failure (network timeout/5xx):
+      // Do not leave contact permanently in IN_PROGRESS. Apply a reconciliation grace window
+      // before retrying to prevent calling the customer twice if Sarvam initiated the call.
+      const reconciliationMs = Math.max(5 * 60 * 1000, campaign.retryIntervalMinutes * 60 * 1000);
+      if (attemptNumber < campaign.maxRetries) {
+        await prisma.contact.update({
+          where: { id: contactId },
+          data: {
+            status: "PENDING",
+            nextAttemptAt: new Date(Date.now() + reconciliationMs),
+          },
+        });
+        await enqueueContactRetry(campaignId, contactId, attemptNumber + 1, reconciliationMs);
+      } else {
+        await prisma.contact.update({
+          where: { id: contactId },
+          data: { status: "FAILED" },
+        });
+      }
     }
 
     return {
@@ -249,4 +293,104 @@ export async function processOutboundCallJob(
     };
   }
 }
+
+/**
+ * Worker Stale-Job Recovery:
+ * Scans for contacts left in IN_PROGRESS due to worker process crashes or network timeouts.
+ * Safely recovers them without creating duplicate phone calls.
+ */
+export async function recoverStaleContacts(maxStaleAgeMs = 5 * 60 * 1000): Promise<number> {
+  const staleThreshold = new Date(Date.now() - maxStaleAgeMs);
+
+  const staleContacts = await prisma.contact.findMany({
+    where: {
+      status: "IN_PROGRESS",
+      lastAttemptAt: { lt: staleThreshold },
+    },
+    include: {
+      campaign: true,
+      callAttempts: {
+        orderBy: { attemptNumber: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  let recoveredCount = 0;
+  for (const contact of staleContacts) {
+    const latestAttempt = contact.callAttempts[0];
+
+    // If attempt has no externalCallId, the worker crashed before provider received request
+    if (!latestAttempt || !latestAttempt.externalCallId) {
+      if (latestAttempt) {
+        await prisma.callAttempt.update({
+          where: { id: latestAttempt.id },
+          data: {
+            status: "FAILED",
+            failureReason: "Worker crashed before dispatch completed",
+            endedAt: new Date(),
+          },
+        });
+      }
+
+      if (contact.campaign.status === "RUNNING") {
+        if (contact.retryCount < contact.campaign.maxRetries) {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { status: "PENDING" },
+          });
+          await enqueueContactRetry(contact.campaignId, contact.id, contact.retryCount + 1, 0);
+        } else {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { status: "FAILED" },
+          });
+        }
+      } else {
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { status: "PENDING" },
+        });
+      }
+      recoveredCount++;
+    } else {
+      // It had an externalCallId, but no webhook arrived within extended timeout
+      const extendedTimeout = new Date(Date.now() - maxStaleAgeMs * 2);
+      if (latestAttempt.startedAt && latestAttempt.startedAt < extendedTimeout) {
+        await prisma.callAttempt.update({
+          where: { id: latestAttempt.id },
+          data: {
+            status: "FAILED",
+            failureReason: "Timed out awaiting provider webhook outcome",
+            endedAt: new Date(),
+          },
+        });
+        if (
+          contact.retryCount < contact.campaign.maxRetries &&
+          contact.campaign.status === "RUNNING"
+        ) {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { status: "PENDING" },
+          });
+          await enqueueContactRetry(
+            contact.campaignId,
+            contact.id,
+            contact.retryCount + 1,
+            contact.campaign.retryIntervalMinutes * 60 * 1000
+          );
+        } else {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { status: "FAILED" },
+          });
+        }
+        recoveredCount++;
+      }
+    }
+  }
+
+  return recoveredCount;
+}
+
 

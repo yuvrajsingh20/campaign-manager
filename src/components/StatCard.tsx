@@ -5,31 +5,60 @@ interface StatCardProps {
   title: string;
   value: string | number;
   description: string;
-  icon: LucideIcon;
+  icon?: LucideIcon;
   badge?: string;
+  badgeVariant?: "default" | "success" | "warning" | "error" | "info";
+  iconColor?: "blue" | "emerald" | "amber" | "purple" | "slate";
 }
 
-export function StatCard({ title, value, description, icon: Icon, badge }: StatCardProps) {
+export function StatCard({
+  title,
+  value,
+  description,
+  icon: Icon,
+  badge,
+  badgeVariant = "info",
+  iconColor = "blue",
+}: StatCardProps) {
+  const iconBgStyles = {
+    blue: "bg-blue-50 text-blue-600",
+    emerald: "bg-emerald-50 text-emerald-600",
+    amber: "bg-amber-50 text-amber-600",
+    purple: "bg-indigo-50 text-indigo-600",
+    slate: "bg-slate-100 text-slate-600",
+  };
+
+  const badgeStyles = {
+    default: "bg-slate-100 text-slate-700 border-slate-200",
+    success: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    warning: "bg-amber-50 text-amber-700 border-amber-200",
+    error: "bg-rose-50 text-rose-700 border-rose-200",
+    info: "bg-blue-50 text-blue-700 border-blue-200",
+  };
+
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-xs">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">{title}</span>
-        <div className="p-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded-lg">
-          <Icon className="w-5 h-5" />
-        </div>
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-slate-300 transition-colors">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-medium text-slate-600">{title}</span>
+        {Icon && (
+          <div className={`p-2 rounded-lg ${iconBgStyles[iconColor]}`}>
+            <Icon className="w-4 h-4" />
+          </div>
+        )}
       </div>
-      <div className="mt-4 flex items-baseline space-x-2">
-        <span className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+      <div className="flex items-baseline gap-2.5">
+        <span className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
           {value}
         </span>
         {badge && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-medium border ${badgeStyles[badgeVariant]}`}
+          >
             {badge}
           </span>
         )}
       </div>
-      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{description}</p>
+      <p className="mt-1 text-xs text-slate-500">{description}</p>
     </div>
   );
 }
-

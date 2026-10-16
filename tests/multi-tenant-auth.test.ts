@@ -144,33 +144,39 @@ describe("Multi-Tenant Authentication and Security Isolation Tests", () => {
   });
 
   after(async () => {
-    // Cleanup created data
-    await prisma.session.deleteMany({
-      where: {
-        userId: { in: [superadminUser?.id, orgAUser?.id, orgBUser?.id].filter(Boolean) as string[] },
-      },
-    });
-    if (orgACampaignId) {
-      await prisma.contact.deleteMany({ where: { campaignId: orgACampaignId } });
-      await prisma.callAttempt.deleteMany({ where: { campaignId: orgACampaignId } });
-      await prisma.campaign.deleteMany({ where: { id: orgACampaignId } });
+    try {
+      // Cleanup created data
+      await prisma.session.deleteMany({
+        where: {
+          userId: { in: [superadminUser?.id, orgAUser?.id, orgBUser?.id].filter(Boolean) as string[] },
+        },
+      });
+      if (orgACampaignId) {
+        await prisma.contact.deleteMany({ where: { campaignId: orgACampaignId } });
+        await prisma.callAttempt.deleteMany({ where: { campaignId: orgACampaignId } });
+        await prisma.campaign.deleteMany({ where: { id: orgACampaignId } });
+      }
+      if (orgBCampaignId) {
+        await prisma.contact.deleteMany({ where: { campaignId: orgBCampaignId } });
+        await prisma.callAttempt.deleteMany({ where: { campaignId: orgBCampaignId } });
+        await prisma.campaign.deleteMany({ where: { id: orgBCampaignId } });
+      }
+      if (orgA?.id) {
+        await prisma.organization.deleteMany({ where: { id: orgA.id } });
+      }
+      if (orgB?.id) {
+        await prisma.organization.deleteMany({ where: { id: orgB.id } });
+      }
+      if (superadminUser?.id) {
+        await prisma.user.deleteMany({ where: { id: superadminUser.id } });
+      }
+    } finally {
+      if (redis.status === "ready" || redis.status === "connecting") {
+        await Promise.race([redis.quit(), new Promise((r) => setTimeout(r, 1000))]);
+      }
+      redis.disconnect();
+      await Promise.race([prisma.$disconnect(), new Promise((r) => setTimeout(r, 1000))]);
     }
-    if (orgBCampaignId) {
-      await prisma.contact.deleteMany({ where: { campaignId: orgBCampaignId } });
-      await prisma.callAttempt.deleteMany({ where: { campaignId: orgBCampaignId } });
-      await prisma.campaign.deleteMany({ where: { id: orgBCampaignId } });
-    }
-    if (orgA?.id) {
-      await prisma.organization.deleteMany({ where: { id: orgA.id } });
-    }
-    if (orgB?.id) {
-      await prisma.organization.deleteMany({ where: { id: orgB.id } });
-    }
-    if (superadminUser?.id) {
-      await prisma.user.deleteMany({ where: { id: superadminUser.id } });
-    }
-    await redis.quit();
-    await prisma.$disconnect();
   });
 
   // Test 1: Unauthenticated requests cannot access protected management APIs

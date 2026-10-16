@@ -59,6 +59,7 @@ export interface DashboardStats {
   activeCampaigns: number;
   totalContacts: number;
   completedCalls: number;
+  failedCalls: number;
 }
 
 export interface ContactCsvRow {

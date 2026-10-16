@@ -104,15 +104,63 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         : {}),
     };
 
-    const [totalContacts, contacts] = await Promise.all([
-      prisma.contact.count({ where: contactWhere }),
-      prisma.contact.findMany({
-        where: contactWhere,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "asc" },
-      }),
-    ]);
+    const [totalContacts, contacts, statusGroups, retryingCount, totalAnsweredCalls, totalFailedCalls] =
+      await Promise.all([
+        prisma.contact.count({ where: contactWhere }),
+        prisma.contact.findMany({
+          where: contactWhere,
+          skip,
+          take: limit,
+          orderBy: { createdAt: "asc" },
+          include: {
+            callAttempts: {
+              orderBy: { attemptNumber: "desc" },
+              take: 5,
+            },
+          },
+        }),
+        prisma.contact.groupBy({
+          by: ["status"],
+          where: { campaignId: id },
+          _count: { status: true },
+        }),
+        prisma.contact.count({
+          where: {
+            campaignId: id,
+            status: { in: ["PENDING", "QUEUED"] },
+            retryCount: { gt: 0 },
+          },
+        }),
+        prisma.callAttempt.count({
+          where: {
+            campaignId: id,
+            status: "ANSWERED",
+          },
+        }),
+        prisma.callAttempt.count({
+          where: {
+            campaignId: id,
+            status: { in: ["FAILED", "BUSY", "NO_ANSWER"] },
+          },
+        }),
+      ]);
+
+    const statusCounts: Record<string, number> = {
+      TOTAL: 0,
+      PENDING: 0,
+      QUEUED: 0,
+      IN_PROGRESS: 0,
+      COMPLETED: 0,
+      FAILED: 0,
+      DO_NOT_CALL: 0,
+      RETRYING: retryingCount,
+    };
+    let totalCohort = 0;
+    for (const group of statusGroups) {
+      statusCounts[group.status] = group._count.status;
+      totalCohort += group._count.status;
+    }
+    statusCounts.TOTAL = totalCohort;
 
     const totalPages = Math.ceil(totalContacts / limit) || 1;
 
@@ -130,12 +178,22 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       ApiResponse<{
         campaign: typeof campaign;
         contacts: typeof contactsPaginated;
+        statusCounts: typeof statusCounts;
+        metrics: {
+          answeredCalls: number;
+          failedCalls: number;
+        };
       }>
     >({
       success: true,
       data: {
         campaign,
         contacts: contactsPaginated,
+        statusCounts,
+        metrics: {
+          answeredCalls: totalAnsweredCalls,
+          failedCalls: totalFailedCalls,
+        },
       },
     });
   } catch (error) {

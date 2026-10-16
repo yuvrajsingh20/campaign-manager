@@ -1,6 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
+import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma";
 import { redis } from "../src/lib/redis";
 import { outboundCallQueue } from "../src/lib/queue";
@@ -23,6 +24,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
   let externalCallAId: string;
   let externalCallBId: string;
   let sessionCookie: string;
+  let testSessionToken: string;
 
   before(async () => {
     // 1. Setup Organization & Workspace
@@ -51,10 +53,11 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
       },
     });
 
+    testSessionToken = `test_token_e2e_${randomUUID()}`;
     const session = await prisma.session.create({
       data: {
         userId: user.id,
-        sessionToken: "test_token_e2e_demo",
+        sessionToken: testSessionToken,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -62,16 +65,24 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
   });
 
   after(async () => {
-    await prisma.session.deleteMany({ where: { sessionToken: "test_token_e2e_demo" } });
-    if (campaignId) {
-      await prisma.callAttempt.deleteMany({ where: { campaignId } });
-      await prisma.contact.deleteMany({ where: { campaignId } });
-      await prisma.campaign.deleteMany({ where: { id: campaignId } });
+    try {
+      if (testSessionToken) {
+        await prisma.session.deleteMany({ where: { sessionToken: testSessionToken } });
+      }
+      if (campaignId) {
+        await prisma.callAttempt.deleteMany({ where: { campaignId } });
+        await prisma.contact.deleteMany({ where: { campaignId } });
+        await prisma.campaign.deleteMany({ where: { id: campaignId } });
+      }
+      await redis.del(`ratelimit:org:${organizationId}`);
+    } finally {
+      await Promise.race([outboundCallQueue.close(), new Promise((r) => setTimeout(r, 1000))]);
+      if (redis.status === "ready" || redis.status === "connecting") {
+        await Promise.race([redis.quit(), new Promise((r) => setTimeout(r, 1000))]);
+      }
+      redis.disconnect();
+      await Promise.race([prisma.$disconnect(), new Promise((r) => setTimeout(r, 1000))]);
     }
-    await redis.del(`ratelimit:org:${organizationId}`);
-    await outboundCallQueue.close();
-    await redis.quit();
-    await prisma.$disconnect();
   });
 
   test("Step 1: Create a campaign via REST API", async () => {

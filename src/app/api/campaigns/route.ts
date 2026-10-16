@@ -219,36 +219,67 @@ export async function GET(req: NextRequest) {
       ...(workspaceId ? { workspaceId } : {}),
     };
 
-    const [totalItems, campaigns] = await Promise.all([
-      prisma.campaign.count({ where }),
-      prisma.campaign.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-          workspace: {
-            select: { id: true, name: true, slug: true },
-          },
-          _count: {
-            select: {
-              contacts: true,
-              callAttempts: true,
+    const [totalItems, campaigns, activeCampaigns, totalContacts, completedCalls, failedCalls] =
+      await Promise.all([
+        prisma.campaign.count({ where }),
+        prisma.campaign.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: "desc" },
+          include: {
+            workspace: {
+              select: { id: true, name: true, slug: true },
+            },
+            _count: {
+              select: {
+                contacts: true,
+                callAttempts: true,
+              },
             },
           },
-        },
-      }),
-    ]);
+        }),
+        prisma.campaign.count({
+          where: {
+            ...orgFilter,
+            status: { in: ["RUNNING", "SCHEDULED"] },
+          },
+        }),
+        prisma.contact.count({
+          where: {
+            campaign: orgFilter,
+          },
+        }),
+        prisma.callAttempt.count({
+          where: {
+            campaign: orgFilter,
+            status: "ANSWERED",
+          },
+        }),
+        prisma.callAttempt.count({
+          where: {
+            campaign: orgFilter,
+            status: { in: ["FAILED", "BUSY", "NO_ANSWER"] },
+          },
+        }),
+      ]);
 
     const totalPages = Math.ceil(totalItems / limit) || 1;
 
-    const result: PaginatedResult<(typeof campaigns)[0]> = {
+    const result = {
       items: campaigns,
       pagination: {
         page,
         limit,
         totalItems,
         totalPages,
+      },
+      metrics: {
+        totalCampaigns: totalItems,
+        activeCampaigns,
+        totalContacts,
+        completedCalls,
+        failedCalls,
       },
     };
 

@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
 import Link from "next/link";
-import { Users, Clock, ArrowRight, UploadCloud, ShieldAlert, Phone } from "lucide-react";
+import { ArrowRight, UploadCloud } from "lucide-react";
 import { CampaignStatus } from "@/types";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
 
 export interface CampaignListItem {
   id: string;
@@ -23,6 +24,7 @@ export interface CampaignListItem {
   };
   _count: {
     contacts: number;
+    callAttempts?: number;
   };
 }
 
@@ -32,114 +34,107 @@ interface CampaignListProps {
 }
 
 export function CampaignList({ campaigns, onUploadCohort }: CampaignListProps) {
-  const getStatusBadge = (status: CampaignStatus) => {
-    switch (status) {
-      case "RUNNING":
-        return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300";
-      case "SCHEDULED":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-300";
-      case "PAUSED":
-        return "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300";
-      case "COMPLETED":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border-purple-300";
-      case "CANCELLED":
-        return "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-300";
-      case "DRAFT":
-      default:
-        return "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300 border-zinc-300";
-    }
-  };
-
   return (
-    <div className="space-y-3">
-      {campaigns.map((campaign) => (
-        <div
-          key={campaign.id}
-          className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all shadow-xs"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${getStatusBadge(
-                    campaign.status
-                  )}`}
-                >
-                  {campaign.status}
-                </span>
-                <Link
-                  href={`/campaigns/${campaign.id}`}
-                  className="text-base font-semibold text-zinc-900 dark:text-zinc-50 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                >
-                  {campaign.name}
-                </Link>
-              </div>
-
-              {campaign.description && (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-1">
-                  {campaign.description}
-                </p>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onUploadCohort(campaign)}
-                className="inline-flex items-center px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 text-xs font-medium text-zinc-700 dark:text-zinc-200 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50/80 text-slate-600 border-b border-slate-200 text-xs font-semibold">
+            <tr>
+              <th className="py-3 px-4">Status</th>
+              <th className="py-3 px-4">Campaign</th>
+              <th className="py-3 px-4">Workspace</th>
+              <th className="py-3 px-4">Calling window</th>
+              <th className="py-3 px-4">Contacts</th>
+              <th className="py-3 px-4">Caller ID</th>
+              <th className="py-3 px-4">Created</th>
+              <th className="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-sm">
+            {campaigns.map((campaign) => (
+              <tr
+                key={campaign.id}
+                className="hover:bg-slate-50/60 transition-colors"
               >
-                <UploadCloud className="w-3.5 h-3.5 mr-1.5" />
-                Upload Cohort
-              </button>
+                <td className="py-3.5 px-4 whitespace-nowrap">
+                  <Badge status={campaign.status} dot />
+                </td>
 
-              <Link
-                href={`/campaigns/${campaign.id}`}
-                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-              >
-                View Campaign
-                <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-              </Link>
-            </div>
-          </div>
+                <td className="py-3.5 px-4">
+                  <Link
+                    href={`/campaigns/${campaign.id}`}
+                    className="font-medium text-slate-900 hover:text-blue-600 transition-colors"
+                  >
+                    {campaign.name}
+                  </Link>
+                  {campaign.description && (
+                    <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">
+                      {campaign.description}
+                    </p>
+                  )}
+                </td>
 
-          <div className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800/80 flex flex-wrap items-center gap-y-2 gap-x-6 text-xs text-zinc-500 dark:text-zinc-400">
-            <div className="flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-zinc-400" />
-              <span>
-                <strong className="text-zinc-700 dark:text-zinc-200">
-                  {campaign._count.contacts}
-                </strong>{" "}
-                contacts
-              </span>
-            </div>
+                <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
+                  {campaign.workspace?.name || "Default"}
+                </td>
 
-            <div className="flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-zinc-400" />
-              <span>
-                {campaign.dailyStartTime || "09:00"} – {campaign.dailyEndTime || "18:00"}{" "}
-                ({campaign.timezone})
-              </span>
-            </div>
+                <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap text-xs">
+                  <span>
+                    {campaign.dailyStartTime || "09:00"} – {campaign.dailyEndTime || "18:00"}
+                  </span>
+                  <span className="text-slate-400 ml-1.5 font-normal">
+                    ({campaign.timezone})
+                  </span>
+                </td>
 
-            {campaign.callerPhoneNumber && (
-              <div className="flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Caller: {campaign.callerPhoneNumber}</span>
-              </div>
-            )}
+                <td className="py-3.5 px-4 font-semibold text-slate-800 whitespace-nowrap">
+                  {campaign._count.contacts.toLocaleString()}
+                </td>
 
-            <div className="flex items-center gap-1.5">
-              <ShieldAlert className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Retries: max {campaign.maxRetries}</span>
-            </div>
+                <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap text-xs">
+                  {campaign.callerPhoneNumber ? (
+                    <code className="text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded font-mono text-xs">
+                      {campaign.callerPhoneNumber}
+                    </code>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
 
-            <div className="ml-auto text-zinc-400 text-2xs">
-              Created {new Date(campaign.createdAt).toLocaleDateString()}
-            </div>
-          </div>
-        </div>
-      ))}
+                <td className="py-3.5 px-4 text-slate-500 text-xs whitespace-nowrap">
+                  {new Date(campaign.createdAt).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </td>
+
+                <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                  <div className="inline-flex items-center gap-2">
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => onUploadCohort(campaign)}
+                      icon={<UploadCloud className="w-3.5 h-3.5" />}
+                    >
+                      Cohort
+                    </Button>
+                    <Link href={`/campaigns/${campaign.id}`}>
+                      <Button
+                        size="xs"
+                        variant="primary"
+                        icon={<ArrowRight className="w-3.5 h-3.5" />}
+                      >
+                        View
+                      </Button>
+                    </Link>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
-

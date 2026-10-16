@@ -3,21 +3,23 @@
 import React, { useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Navbar } from "@/components/Navbar";
 import {
-  ArrowLeft,
-  Building2,
   FolderTree,
   Users,
   Megaphone,
   Zap,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  Calendar,
+  Plus,
+  Edit2,
   AlertCircle,
-  Save,
+  Building2,
+  ArrowRight,
 } from "lucide-react";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
+import { CreateCampaignModal } from "@/components/CreateCampaignModal";
+import { EmptyState } from "@/components/EmptyState";
 
 interface CompanyDetail {
   id: string;
@@ -65,16 +67,25 @@ function CompanyDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const [company, setCompany] = useState<CompanyDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Editable settings
+  // Editable RPS setting
   const [rpsInput, setRpsInput] = useState<number>(5.0);
+  const [isEditingRps, setIsEditingRps] = useState(false);
   const [savingRps, setSavingRps] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
+  // Workspace creation
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Campaign creation modal
+  const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
+
   useEffect(() => {
     let ignore = false;
-
-    async function load() {
+    async function fetchData() {
       try {
         const meRes = await fetch("/api/auth/me");
         if (!meRes.ok) {
@@ -101,11 +112,11 @@ function CompanyDetailContent({ params }: { params: Promise<{ id: string }> }) {
       }
     }
 
-    load();
+    fetchData();
     return () => {
       ignore = true;
     };
-  }, [id, router]);
+  }, [id, refreshTrigger, router]);
 
   const handleUpdateRps = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,10 +132,19 @@ function CompanyDetailContent({ params }: { params: Promise<{ id: string }> }) {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setCompany((prev) => (prev ? { ...prev, maxRequestsPerSecond: data.data.maxRequestsPerSecond, rateLimitPerMinute: data.data.rateLimitPerMinute } : prev));
-        setMessage({ text: "RPS limit updated successfully.", type: "success" });
+        setCompany((prev) =>
+          prev
+            ? {
+                ...prev,
+                maxRequestsPerSecond: data.data.maxRequestsPerSecond,
+                rateLimitPerMinute: data.data.rateLimitPerMinute,
+              }
+            : prev
+        );
+        setMessage({ text: "Organisation rate limit updated successfully.", type: "success" });
+        setIsEditingRps(false);
       } else {
-        setMessage({ text: data?.error?.message || "Failed to update RPS limit", type: "error" });
+        setMessage({ text: data?.error?.message || "Failed to update rate limit", type: "error" });
       }
     } catch {
       setMessage({ text: "Network error occurred", type: "error" });
@@ -150,11 +170,11 @@ function CompanyDetailContent({ params }: { params: Promise<{ id: string }> }) {
       if (res.ok && data.success) {
         setCompany((prev) => (prev ? { ...prev, status: nextStatus } : prev));
         setMessage({
-          text: `Company has been ${nextStatus === "ACTIVE" ? "activated" : "deactivated"}.`,
+          text: `Organisation status changed to ${nextStatus}.`,
           type: "success",
         });
       } else {
-        setMessage({ text: data?.error?.message || "Failed to update status", type: "error" });
+        setMessage({ text: data?.error?.message || "Failed to toggle status", type: "error" });
       }
     } catch {
       setMessage({ text: "Network error occurred", type: "error" });
@@ -163,272 +183,500 @@ function CompanyDetailContent({ params }: { params: Promise<{ id: string }> }) {
     }
   };
 
-  if (loading || !company) {
+  const handleCreateWorkspace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWorkspaceName.trim()) return;
+    setCreatingWorkspace(true);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newWorkspaceName.trim(),
+          organizationId: id,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setNewWorkspaceName("");
+        setShowNewWorkspace(false);
+        setMessage({ text: "Workspace created successfully.", type: "success" });
+        setRefreshTrigger((p) => p + 1);
+      } else {
+        setMessage({ text: data?.error?.message || "Failed to create workspace", type: "error" });
+      }
+    } catch {
+      setMessage({ text: "Failed to create workspace", type: "error" });
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  };
+
+  if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col font-sans">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
+      <DashboardLayout
+        breadcrumbs={[
+          { label: "Organisations", href: "/admin" },
+          { label: "Loading..." },
+        ]}
+      >
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <div className="text-center space-y-2">
+            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-xs text-slate-500">Loading organisation records...</p>
+          </div>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
+  if (!company) {
+    return (
+      <DashboardLayout
+        breadcrumbs={[
+          { label: "Organisations", href: "/admin" },
+          { label: "Not found" },
+        ]}
+      >
+        <div className="max-w-md mx-auto py-12">
+          <EmptyState
+            title="Organisation not found"
+            description="The requested organisation does not exist or has been removed."
+            icon={Building2}
+            action={
+              <Link href="/admin">
+                <Button variant="primary">Return to organisations</Button>
+              </Link>
+            }
+          />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const isActive = company.status === "ACTIVE";
+
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col font-sans">
-      <Navbar />
+    <DashboardLayout
+      breadcrumbs={[
+        { label: "Organisations", href: "/admin" },
+        { label: company.name },
+      ]}
+      actions={
+        <Button
+          variant={isActive ? "destructive-outline" : "primary"}
+          size="sm"
+          onClick={handleToggleStatus}
+          isLoading={togglingStatus}
+        >
+          {isActive ? "Deactivate organisation" : "Activate organisation"}
+        </Button>
+      }
+    >
+      <div className="space-y-6">
+        {/* Header Section */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-6 border-b border-slate-200">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                {company.name}
+              </h1>
+              <Badge status={company.status} dot />
+            </div>
+            <div className="flex items-center gap-3 text-xs text-slate-500 mt-1.5 flex-wrap">
+              <span>
+                Slug: <code className="text-slate-700 font-mono">/{company.slug}</code>
+              </span>
+              <span>•</span>
+              <span>
+                ID: <code className="text-slate-600 font-mono">{company.id}</code>
+              </span>
+              <span>•</span>
+              <span>
+                Onboarded:{" "}
+                <strong className="text-slate-700 font-medium">
+                  {new Date(company.createdAt).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </strong>
+              </span>
+            </div>
+          </div>
+        </div>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Navigation Breadcrumb */}
-        <div>
-          <Link
-            href="/admin"
-            className="inline-flex items-center text-xs font-semibold text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+        {/* Feedback Message Alert */}
+        {message && (
+          <div
+            className={`p-4 rounded-xl text-xs flex items-center gap-2.5 border ${
+              message.type === "success"
+                ? "bg-emerald-50/60 border-emerald-200 text-emerald-800"
+                : "bg-rose-50 border-rose-200 text-rose-800"
+            }`}
           >
-            <ArrowLeft className="w-3.5 h-3.5 mr-1" />
-            Back to Companies Directory
-          </Link>
-        </div>
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{message.text}</span>
+          </div>
+        )}
 
-        {/* Company Header */}
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-2xs">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-start space-x-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center shrink-0">
-                <Building2 className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="flex items-center space-x-2.5">
-                  <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-                    {company.name}
-                  </h1>
-                  <span
-                    className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                      company.status === "ACTIVE"
-                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                        : "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300"
-                    }`}
+        {/* Organisation Overview: Balanced Grid of Three Clean Cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Card 1 — Rate limit */}
+          <Card className="flex flex-col justify-between">
+            <div>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                    <Zap className="w-4 h-4" />
+                  </div>
+                  <CardTitle className="text-sm">Organisation rate limit</CardTitle>
+                </div>
+                {!isEditingRps && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setIsEditingRps(true)}
+                    icon={<Edit2 className="w-3.5 h-3.5" />}
                   >
-                    {company.status === "ACTIVE" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                    ) : (
-                      <XCircle className="w-3.5 h-3.5" />
-                    )}
-                    <span>{company.status}</span>
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center space-x-4 text-xs text-zinc-500">
-                  <span>Slug: /{company.slug}</span>
-                  <span>•</span>
-                  <span>ID: {company.id}</span>
-                  <span>•</span>
-                  <span className="flex items-center">
-                    <Calendar className="w-3.5 h-3.5 mr-1 text-zinc-400" />
-                    Onboarded {new Date(company.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <button
-                type="button"
-                onClick={handleToggleStatus}
-                disabled={togglingStatus}
-                className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center space-x-1.5 ${
-                  company.status === "ACTIVE"
-                    ? "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/60 dark:text-red-300 border border-red-200 dark:border-red-900"
-                    : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-2xs"
-                }`}
-              >
-                {togglingStatus && <Loader2 className="w-3 h-3 animate-spin mr-1" />}
-                <span>{company.status === "ACTIVE" ? "Deactivate Company" : "Activate Company"}</span>
-              </button>
-            </div>
-          </div>
-
-          {message && (
-            <div
-              className={`mt-4 p-3 rounded-xl text-xs flex items-center space-x-2 ${
-                message.type === "success"
-                  ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200"
-                  : "bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-300 border border-red-200"
-              }`}
-            >
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{message.text}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Configuration & Rate Limiting Form */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="md:col-span-1 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-2xs space-y-4">
-            <div className="flex items-center space-x-2 text-zinc-900 dark:text-zinc-50 font-semibold text-sm">
-              <Zap className="w-4 h-4 text-amber-500" />
-              <span>Organisation Rate Limiter</span>
-            </div>
-            <p className="text-xs text-zinc-500">
-              Update the maximum simultaneous outgoing call requests permitted across all company campaigns.
-            </p>
-
-            <form onSubmit={handleUpdateRps} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-                  Permitted RPS Limit (req/sec)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0.5"
-                  max="200"
-                  required
-                  value={rpsInput}
-                  onChange={(e) => setRpsInput(parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl text-xs text-zinc-500 space-y-1">
-                <div>Tokens Refill: Every rolling 1000ms</div>
-                <div>Per Minute Equivalent: ~{Math.round(rpsInput * 60)} req/min</div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={savingRps}
-                className="w-full py-2 px-4 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-2xs flex items-center justify-center cursor-pointer"
-              >
-                {savingRps ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-3.5 h-3.5 mr-1.5" />
-                    Save RPS Limit
-                  </>
+                    Edit
+                  </Button>
                 )}
-              </button>
-            </form>
-          </div>
-
-          {/* Associated Workspaces & Users */}
-          <div className="md:col-span-2 space-y-6">
-            {/* Workspaces */}
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-2xs space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-zinc-900 dark:text-zinc-50 font-semibold text-sm">
-                  <FolderTree className="w-4 h-4 text-blue-500" />
-                  <span>Workspaces ({company.workspaces.length})</span>
-                </div>
-              </div>
-
-              <div className="divide-y divide-zinc-100 dark:divide-zinc-800 text-xs">
-                {company.workspaces.map((ws) => (
-                  <div key={ws.id} className="py-2.5 flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold text-zinc-800 dark:text-zinc-200">{ws.name}</div>
-                      <div className="text-zinc-400 font-mono">/{ws.slug} • ID: {ws.id}</div>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
-                      {ws._count.campaigns} campaigns
-                    </span>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <div className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
+                    {company.maxRequestsPerSecond}{" "}
+                    <span className="text-sm font-normal text-slate-500">requests/sec</span>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Users */}
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 shadow-2xs space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-zinc-900 dark:text-zinc-50 font-semibold text-sm">
-                  <Users className="w-4 h-4 text-purple-500" />
-                  <span>Company Users ({company.users.length})</span>
+                  <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                    Ceiling limit enforced atomically across all campaigns, background worker nodes, and telephony requests.
+                  </p>
                 </div>
-              </div>
 
-              <div className="divide-y divide-zinc-100 dark:divide-zinc-800 text-xs">
-                {company.users.map((u) => (
-                  <div key={u.id} className="py-2.5 flex items-center justify-between">
+                {isEditingRps ? (
+                  <form onSubmit={handleUpdateRps} className="space-y-3 pt-2 border-t border-slate-100">
                     <div>
-                      <div className="font-semibold text-zinc-800 dark:text-zinc-200">
-                        {u.name || "User"}
-                      </div>
-                      <div className="text-zinc-400">{u.email}</div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Permitted limit (requests/sec)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0.5"
+                        max="100"
+                        required
+                        value={rpsInput}
+                        onChange={(e) => setRpsInput(parseFloat(e.target.value))}
+                        className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
                     </div>
-                    <span className="px-2 py-0.5 rounded-full font-bold uppercase bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                      {u.role}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Campaigns List */}
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xs overflow-hidden">
-          <div className="p-4 sm:p-6 border-b border-zinc-200 dark:border-zinc-800">
-            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50 flex items-center space-x-2">
-              <Megaphone className="w-4 h-4 text-blue-600" />
-              <span>Company Campaigns ({company.campaigns.length})</span>
-            </h2>
-            <p className="text-xs text-zinc-500">Outbound voice campaigns configured for this company</p>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-zinc-50 dark:bg-zinc-800/50 text-[11px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-800">
-                <tr>
-                  <th className="py-3 px-4 sm:px-6">Campaign Name</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Workspace</th>
-                  <th className="py-3 px-4">Contacts</th>
-                  <th className="py-3 px-4">Calls Made</th>
-                  <th className="py-3 px-4">Caller ID</th>
-                  <th className="py-3 px-4">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 text-xs">
-                {company.campaigns.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-zinc-500">
-                      No campaigns created for this company yet.
-                    </td>
-                  </tr>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        type="button"
+                        onClick={() => {
+                          setRpsInput(company.maxRequestsPerSecond);
+                          setIsEditingRps(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="primary"
+                        type="submit"
+                        isLoading={savingRps}
+                      >
+                        Save limit
+                      </Button>
+                    </div>
+                  </form>
                 ) : (
-                  company.campaigns.map((c) => (
-                    <tr key={c.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30">
-                      <td className="py-3.5 px-4 sm:px-6 font-semibold text-zinc-900 dark:text-zinc-100">
-                        {c.name}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className="px-2 py-0.5 rounded-full font-semibold uppercase text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                          {c.status}
+                  <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-lg text-xs space-y-1 text-slate-600">
+                    <div className="flex justify-between">
+                      <span>Enforcement window:</span>
+                      <strong className="text-slate-800">1,000ms sliding window</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Per-minute equivalent:</span>
+                      <strong className="text-slate-800">
+                        ~{Math.round(company.maxRequestsPerSecond * 60)} req/min
+                      </strong>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </div>
+          </Card>
+
+          {/* Card 2 — Workspaces */}
+          <Card className="flex flex-col justify-between">
+            <div>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <FolderTree className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-sm">Workspaces</CardTitle>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-700">
+                    {company.workspaces.length}
+                  </span>
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    onClick={() => setShowNewWorkspace((prev) => !prev)}
+                    icon={<Plus className="w-3.5 h-3.5" />}
+                  >
+                    {showNewWorkspace ? "Cancel" : "Create"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {showNewWorkspace && (
+                  <form onSubmit={handleCreateWorkspace} className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2 text-xs">
+                    <label className="block font-medium text-slate-700">
+                      Workspace name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newWorkspaceName}
+                      onChange={(e) => setNewWorkspaceName(e.target.value)}
+                      placeholder="e.g. Inbound Support"
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        type="button"
+                        onClick={() => setShowNewWorkspace(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="primary"
+                        type="submit"
+                        isLoading={creatingWorkspace}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </form>
+                )}
+
+                {company.workspaces.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-500">
+                    No workspaces configured yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                    {company.workspaces.map((ws) => (
+                      <div
+                        key={ws.id}
+                        className="py-2.5 flex items-center justify-between gap-2"
+                      >
+                        <div className="truncate">
+                          <span className="font-medium text-slate-900 text-xs truncate block">
+                            {ws.name}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            /{ws.slug}
+                          </span>
+                        </div>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium shrink-0">
+                          {ws._count.campaigns} campaigns
                         </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-zinc-500">{c.workspace.name}</td>
-                      <td className="py-3.5 px-4 text-zinc-700 dark:text-zinc-300 font-medium">
-                        {c._count.contacts}
-                      </td>
-                      <td className="py-3.5 px-4 text-zinc-700 dark:text-zinc-300 font-medium">
-                        {c._count.callAttempts}
-                      </td>
-                      <td className="py-3.5 px-4 text-zinc-500">{c.callerPhoneNumber || "Default"}</td>
-                      <td className="py-3.5 px-4 text-zinc-500">
-                        {new Date(c.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </tbody>
-            </table>
-          </div>
+              </CardContent>
+            </div>
+          </Card>
+
+          {/* Card 3 — Organisation users */}
+          <Card className="flex flex-col justify-between">
+            <div>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <CardTitle className="text-sm">Organisation users</CardTitle>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-700">
+                  {company.users.length}
+                </span>
+              </CardHeader>
+              <CardContent>
+                {company.users.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-500">
+                    No users found for this organisation.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                    {company.users.map((u) => (
+                      <div
+                        key={u.id}
+                        className="py-2.5 flex items-center justify-between gap-2"
+                      >
+                        <div className="truncate">
+                          <div className="font-medium text-slate-900 text-xs truncate">
+                            {u.name || "User"}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {u.email}
+                          </div>
+                        </div>
+                        <Badge
+                          variant={u.role === "SUPERADMIN" ? "purple" : "info"}
+                          className="text-[10px] py-0 px-2 shrink-0"
+                        >
+                          {u.role}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </div>
+          </Card>
         </div>
-      </main>
-    </div>
+
+        {/* Dedicated Campaigns Section */}
+        <section className="space-y-4 pt-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-lg font-semibold text-slate-900">Campaigns</h2>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-medium">
+                  {company.campaigns.length} total
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Outbound voice campaigns configured across this organisation&apos;s workspaces.
+              </p>
+            </div>
+
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsCreateCampaignOpen(true)}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
+              Create campaign
+            </Button>
+          </div>
+
+          {company.campaigns.length === 0 ? (
+            <EmptyState
+              title="No campaigns yet"
+              description="This organisation does not have any active or draft outbound voice campaigns."
+              icon={Megaphone}
+              actionLabel="Create campaign"
+              onCreateCampaign={() => setIsCreateCampaignOpen(true)}
+            />
+          ) : (
+            <Card>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50/80 text-slate-600 border-b border-slate-200 text-xs font-semibold">
+                    <tr>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Campaign</th>
+                      <th className="py-3 px-4">Workspace</th>
+                      <th className="py-3 px-4">Contacts</th>
+                      <th className="py-3 px-4">Calls made</th>
+                      <th className="py-3 px-4">Caller ID</th>
+                      <th className="py-3 px-4">Created</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {company.campaigns.map((c) => (
+                      <tr
+                        key={c.id}
+                        className="hover:bg-slate-50/60 transition-colors"
+                      >
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <Badge status={c.status} dot />
+                        </td>
+
+                        <td className="py-3.5 px-4 font-medium text-slate-900">
+                          <Link
+                            href={`/campaigns/${c.id}`}
+                            className="hover:text-blue-600 transition-colors"
+                          >
+                            {c.name}
+                          </Link>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
+                          {c.workspace.name}
+                        </td>
+
+                        <td className="py-3.5 px-4 font-semibold text-slate-800 whitespace-nowrap">
+                          {c._count.contacts.toLocaleString()}
+                        </td>
+
+                        <td className="py-3.5 px-4 font-semibold text-slate-800 whitespace-nowrap">
+                          {c._count.callAttempts.toLocaleString()}
+                        </td>
+
+                        <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap text-xs font-mono">
+                          {c.callerPhoneNumber || "—"}
+                        </td>
+
+                        <td className="py-3.5 px-4 text-slate-500 text-xs whitespace-nowrap">
+                          {new Date(c.createdAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          <Link href={`/campaigns/${c.id}`}>
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              icon={<ArrowRight className="w-3.5 h-3.5" />}
+                            >
+                              View
+                            </Button>
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </section>
+
+        {/* Create Campaign Modal */}
+        <CreateCampaignModal
+          isOpen={isCreateCampaignOpen}
+          onClose={() => setIsCreateCampaignOpen(false)}
+          onCreated={() => {
+            setRefreshTrigger((p) => p + 1);
+            setIsCreateCampaignOpen(false);
+          }}
+        />
+      </div>
+    </DashboardLayout>
   );
 }
 
@@ -436,11 +684,8 @@ export default function CompanyDetailPage(props: { params: Promise<{ id: string 
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col font-sans">
-          <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 sticky top-0 z-50 h-16" />
-          <div className="flex-1 flex items-center justify-center">
-            <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
-          </div>
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+          <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
         </div>
       }
     >

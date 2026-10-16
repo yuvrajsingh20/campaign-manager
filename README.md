@@ -196,14 +196,14 @@ Open [http://localhost:3000/login](http://localhost:3000/login) to log in.
 
 ## 7. Automated Tests & Verification
 
-### 7.1 Run Full Test Suite (49/49 Passing)
+### 7.1 Run Full Test Suite (51/51 Passing)
 
 ```bash
 npm test
 ```
 
-Executes 49 automated tests across 6 comprehensive suites:
-1. `multi-tenant-auth.test.ts`: **10 core security tests** proving:
+Executes 51 automated tests across 6 comprehensive suites:
+1. `multi-tenant-auth.test.ts`: **Core security and isolation tests** proving:
    - Unauthenticated API access rejection (401)
    - Superadmin company onboarding transactionality and idempotency
    - Company owner campaign viewing and execution
@@ -215,11 +215,11 @@ Executes 49 automated tests across 6 comprehensive suites:
    - Duplicate onboarding prevention
 2. `campaign-api.test.ts`: Campaign CRUD, query filters, pagination, and config validation.
 3. `cohort-upload.test.ts`: Multipart CSV upload, header normalization, required variable checks, and sample CSV downloads.
-4. `rate-limiter.test.ts`: Atomic sliding-window rate limiter, rolling-second burst prevention, and 30-worker concurrency.
+4. `rate-limiter.test.ts`: Atomic sliding-window rate limiter, rolling-second burst prevention, sub-1 RPS (0.5 RPS), fractional limits (8.5 RPS), zero/negative boundaries, and concurrent worker handling.
 5. `lifecycle-execution.test.ts`: Start/pause/resume/stop state machine, calling windows, duplicate webhook idempotency, short duration retry rules, and atomic parallel worker claims.
 6. `e2e-demo.test.ts`: Complete 12-step automated acceptance flow.
 
-### 5.2 Run the End-to-End Demo Script
+### 7.2 Run the End-to-End Demo Script
 
 ```bash
 npm run demo
@@ -251,7 +251,7 @@ Target endpoint:
   "app_config": {
     "app_id": "agent_retention_v2",
     "app_version": 1,
-    "app_type": "outbound_voice",
+    "app_type": "agent",
     "connection_config": {
       "connection_id": "conn_telnyx_01",
       "agent_phone_number": "+14155552671"
@@ -277,9 +277,11 @@ Target endpoint:
 }
 ```
 
+- `app_type` is strictly `"agent"` conforming directly to the Sarvam Outbound Voice Agent API contract.
 - `app_version` is parsed strictly as an **integer** (e.g. `"v1.2"` $\to$ `1`).
 - Variable mapping maps cohort custom variables to `agent_variables`.
 - `app_overrides` supports campaign-level agent overrides where configured.
+- **Strict Production Live Validation**: In live mode (`SARVAM_MOCK_MODE=false`), the client strictly requires non-placeholder values for `appId`, `connectionId`, and `callerPhoneNumber`, refusing silent placeholder substitutions.
 
 ### 7.2 Safe Mock Mode vs Live Operation
 - When `SARVAM_MOCK_MODE=true` (or when `SARVAM_API_KEY` is not provided), the client simulates realistic provider responses returning `mock_att_{timestamp}_{random}` without triggering external telephony.
@@ -314,9 +316,10 @@ A ready-to-import Postman collection is located at [`docs/campaign-manager-postm
 | `GET` | `/api/admin/companies/[id]` | **[Superadmin]** Company inspection with workspaces, users, and campaigns. |
 | `PATCH` | `/api/admin/companies/[id]` | **[Superadmin]** Update company RPS limit or toggle status (ACTIVE/INACTIVE). |
 | `GET` | `/api/workspaces` | List authorized workspaces scoped to the user's organization. |
+| `POST` | `/api/workspaces` | Provision a new workspace within an authorized organization context. |
 | `POST` | `/api/campaigns` | Create a campaign with validated calling window, agent, and retry configuration. |
 | `GET` | `/api/campaigns` | List campaigns with contact counts, search, status filters, and pagination. |
-| `GET` | `/api/campaigns/[id]` | Get detailed campaign configuration and paginated cohort contacts. |
+| `GET` | `/api/campaigns/[id]` | Get detailed campaign configuration, aggregate outcome metrics, and paginated contacts. |
 | `PATCH` | `/api/campaigns/[id]` | Update campaign configuration safely while preventing invalid state transitions. |
 | `POST` | `/api/campaigns/[id]/start` | Start campaign; validates $\ge 1$ contact, enqueues pending contacts to BullMQ. |
 | `POST` | `/api/campaigns/[id]/pause` | Pause campaign; halts pending dispatches immediately. |
@@ -331,6 +334,7 @@ A ready-to-import Postman collection is located at [`docs/campaign-manager-postm
 ## 10. Reliability & Security Considerations
 
 1. **Race Conditions Across Workers**: When parallel workers pick up jobs for the exact same contact, PostgreSQL conditional locking (`UPDATE contacts SET status = 'IN_PROGRESS' WHERE status IN ('QUEUED', 'PENDING')`) guarantees that exactly **one** worker succeeds, while subsequent workers skip execution safely.
-2. **Ambiguous Provider Failures**: If an external network timeout or 5xx occurs after dispatch, the attempt is marked with `isAmbiguous: true` rather than blindly re-calling the customer.
-3. **Tenant Isolation**: Campaigns and rate limits are scoped to verified workspaces and organizations. Client-supplied organization IDs are never trusted blindly.
-4. **Credential Safety**: No API keys or secrets are exposed in API responses or logs. `.env.example` contains only non-sensitive placeholders.
+2. **Worker Crash & Stale Job Recovery**: If a worker process abruptly terminates or crashes while contacts are marked `IN_PROGRESS`, contacts could otherwise become stranded. The background worker runs `recoverStaleContacts(maxStaleAgeMs)` on startup and during a recurring 60-second background maintenance sweep. Contacts stranded in `IN_PROGRESS` beyond the staleness threshold without active attempts are recovered back to `PENDING` or scheduled for reconciliation.
+3. **Ambiguous Provider Failures**: If an external network timeout or 5xx occurs after dispatch, the attempt is marked with `isAmbiguous: true` and a reconciliation backoff is applied rather than blindly re-calling the customer and risking duplicate calls.
+4. **Tenant Isolation**: Campaigns and rate limits are scoped to verified workspaces and organizations. Client-supplied organization IDs are never trusted blindly.
+5. **Credential Safety**: No API keys or secrets are exposed in API responses or logs. `.env.example` contains only non-sensitive placeholders. Temporary passwords are cryptographically generated using 72-bit secure random tokens.

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSuperadmin } from "@/lib/auth";
+import { requireSuperadmin, clearSessionCache } from "@/lib/auth";
 import { OrganizationStatus } from "@prisma/client";
 import { ApiResponse } from "@/types";
 import { z } from "zod";
@@ -173,6 +173,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         rateLimitPerMinute: computedRpm,
       },
     });
+
+    clearSessionCache();
 
     return NextResponse.json<ApiResponse<typeof updated>>(
       {

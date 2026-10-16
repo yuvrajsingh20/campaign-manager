@@ -1,5 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { prisma } from "../src/lib/prisma";
 import { POST as executeLifecycle } from "../src/app/api/campaigns/[id]/[action]/route";
@@ -15,35 +16,65 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   let testContactId: string;
 
   let sessionCookie: string;
+  let testSessionToken: string;
 
   before(async () => {
-    const org = await prisma.organization.upsert({
+    let org = await prisma.organization.findUnique({
       where: { slug: "acme-corp" },
-      update: { rateLimitPerMinute: 600 },
-      create: { name: "Acme Corporation", slug: "acme-corp", rateLimitPerMinute: 600 },
-    });
-
-    const ws = await prisma.workspace.upsert({
-      where: { organizationId_slug: { organizationId: org.id, slug: "default" } },
-      update: {},
-      create: { name: "Default Workspace", slug: "default", organizationId: org.id },
-    });
-
-    const user = await prisma.user.upsert({
-      where: { email: "admin@acme.com" },
-      update: { organizationId: org.id },
-      create: {
-        email: "admin@acme.com",
-        name: "Admin User",
-        role: "OWNER",
-        organizationId: org.id,
+      include: {
+        workspaces: { where: { slug: "default" } },
+        users: { where: { email: "admin@acme.com" } },
       },
     });
 
+    if (!org) {
+      org = await prisma.organization.create({
+        data: {
+          name: "Acme Corporation",
+          slug: "acme-corp",
+          rateLimitPerMinute: 600,
+          workspaces: {
+            create: { name: "Default Workspace", slug: "default" },
+          },
+          users: {
+            create: {
+              email: "admin@acme.com",
+              name: "Admin User",
+              role: "OWNER",
+            },
+          },
+        },
+        include: {
+          workspaces: true,
+          users: true,
+        },
+      });
+    }
+
+    let ws = org.workspaces[0];
+    if (!ws) {
+      ws = await prisma.workspace.create({
+        data: { name: "Default Workspace", slug: "default", organizationId: org.id },
+      });
+    }
+
+    let user = org.users[0];
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: "admin@acme.com",
+          name: "Admin User",
+          role: "OWNER",
+          organizationId: org.id,
+        },
+      });
+    }
+
+    testSessionToken = `test-lifecycle-${randomUUID()}`;
     const session = await prisma.session.create({
       data: {
         userId: user.id,
-        sessionToken: "test_token_lifecycle",
+        sessionToken: testSessionToken,
         expiresAt: new Date(Date.now() + 86400000),
       },
     });
@@ -95,13 +126,21 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   });
 
   after(async () => {
-    await prisma.session.deleteMany({ where: { sessionToken: "test_token_lifecycle" } });
-    await prisma.callAttempt.deleteMany({ where: { campaignId } });
-    await prisma.contact.deleteMany({ where: { campaignId } });
-    await prisma.campaign.deleteMany({ where: { id: { in: [campaignId, emptyCampaignId] } } });
-    await outboundCallQueue.close();
-    await redis.quit();
-    await prisma.$disconnect();
+    try {
+      if (testSessionToken) {
+        await prisma.session.deleteMany({ where: { sessionToken: testSessionToken } });
+      }
+      await prisma.callAttempt.deleteMany({ where: { campaignId } });
+      await prisma.contact.deleteMany({ where: { campaignId } });
+      await prisma.campaign.deleteMany({ where: { id: { in: [campaignId, emptyCampaignId] } } });
+    } finally {
+      await Promise.race([outboundCallQueue.close(), new Promise((r) => setTimeout(r, 1000))]);
+      if (redis.status === "ready" || redis.status === "connecting") {
+        await Promise.race([redis.quit(), new Promise((r) => setTimeout(r, 1000))]);
+      }
+      redis.disconnect();
+      await Promise.race([prisma.$disconnect(), new Promise((r) => setTimeout(r, 1000))]);
+    }
   });
 
   test("Cannot start campaign with 0 contacts (400 NO_CONTACTS)", async () => {
