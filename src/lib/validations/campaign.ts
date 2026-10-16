@@ -125,7 +125,9 @@ export type CampaignFilterInput = z.infer<typeof campaignFilterSchema>;
 export const contactFilterSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
-  status: z.enum(["PENDING", "QUEUED", "IN_PROGRESS", "COMPLETED", "FAILED", "DO_NOT_CALL"]).optional(),
+  status: z
+    .enum(["PENDING", "QUEUED", "IN_PROGRESS", "COMPLETED", "FAILED", "DO_NOT_CALL", "RETRYING"])
+    .optional(),
   search: z.string().optional(),
 });
 

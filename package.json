@@ -14,11 +14,11 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "worker": "tsx src/worker.ts",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "setup": "npm run db:push && npm run db:seed"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
-    "@supabase/supabase-js": "^2.118.0",
     "bullmq": "^6.3.15",
     "ioredis": "^6.0.0",
     "lucide-react": "^1.57.0",

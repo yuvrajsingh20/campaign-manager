@@ -16,6 +16,7 @@ import {
   Square,
   AlertCircle,
   List,
+  Edit2,
 } from "lucide-react";
 import { CampaignStatus, ContactStatus } from "@/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
@@ -24,6 +25,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
 import { UploadCohortModal } from "@/components/UploadCohortModal";
+import { EditCampaignModal } from "@/components/EditCampaignModal";
 import { EmptyState } from "@/components/EmptyState";
 
 interface CallAttemptItem {
@@ -139,7 +141,24 @@ function CampaignDetailContent({
   const [selectedContactHistory, setSelectedContactHistory] = useState<ContactItem | null>(null);
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [canManage, setCanManage] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!ignore && data?.data?.user?.role === "MEMBER") {
+          setCanManage(false);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -288,7 +307,7 @@ function CampaignDetailContent({
       ]}
       actions={
         <div className="flex items-center gap-2">
-          {campaign.status === "DRAFT" && (
+          {canManage && campaign.status === "DRAFT" && (
             <Button
               size="sm"
               variant="primary"
@@ -305,7 +324,7 @@ function CampaignDetailContent({
             </Button>
           )}
 
-          {campaign.status === "RUNNING" && (
+          {canManage && campaign.status === "RUNNING" && (
             <>
               <Button
                 size="sm"
@@ -328,7 +347,7 @@ function CampaignDetailContent({
             </>
           )}
 
-          {campaign.status === "PAUSED" && (
+          {canManage && campaign.status === "PAUSED" && (
             <>
               <Button
                 size="sm"
@@ -351,14 +370,30 @@ function CampaignDetailContent({
             </>
           )}
 
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setIsUploadOpen(true)}
-            icon={<UploadCloud className="w-3.5 h-3.5" />}
-          >
-            Upload cohort
-          </Button>
+          {canManage &&
+            (campaign.status === "DRAFT" ||
+              campaign.status === "SCHEDULED" ||
+              campaign.status === "PAUSED") && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setIsEditOpen(true)}
+              icon={<Edit2 className="w-3.5 h-3.5" />}
+            >
+              Edit configuration
+            </Button>
+          )}
+
+          {canManage && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setIsUploadOpen(true)}
+              icon={<UploadCloud className="w-3.5 h-3.5" />}
+            >
+              Upload cohort
+            </Button>
+          )}
         </div>
       }
     >
@@ -611,13 +646,14 @@ function CampaignDetailContent({
                   }}
                   className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 >
-                  <option value="">Status: All</option>
-                  <option value="PENDING">Pending</option>
-                  <option value="QUEUED">Queued</option>
-                  <option value="IN_PROGRESS">In progress</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="FAILED">Failed</option>
-                  <option value="DO_NOT_CALL">Do not call</option>
+                  <option value="">Status: All ({statusCounts.TOTAL})</option>
+                  <option value="RETRYING">Retrying ({statusCounts.RETRYING})</option>
+                  <option value="PENDING">Pending ({statusCounts.PENDING})</option>
+                  <option value="QUEUED">Queued ({statusCounts.QUEUED})</option>
+                  <option value="IN_PROGRESS">In progress ({statusCounts.IN_PROGRESS})</option>
+                  <option value="COMPLETED">Completed ({statusCounts.COMPLETED})</option>
+                  <option value="FAILED">Failed ({statusCounts.FAILED})</option>
+                  <option value="DO_NOT_CALL">Do not call ({statusCounts.DO_NOT_CALL})</option>
                 </select>
 
                 <Button
@@ -879,6 +915,14 @@ function CampaignDetailContent({
           requiredVariables={campaign.requiredVariables}
           onClose={() => setIsUploadOpen(false)}
           onSuccess={handleRefresh}
+        />
+
+        {/* Edit Campaign Configuration Modal */}
+        <EditCampaignModal
+          isOpen={isEditOpen}
+          campaign={campaign}
+          onClose={() => setIsEditOpen(false)}
+          onUpdated={handleRefresh}
         />
       </div>
     </DashboardLayout>

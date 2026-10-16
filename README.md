@@ -127,19 +127,29 @@ docker compose up -d
 docker compose ps
 ```
 
-### 5.2 Database Initialization & Idempotent Seeding
+### 5.2 Single-Command Database Initialization & Deterministic Seeding
+
+Run the unified setup command to push the schema and seed demo accounts:
 
 ```bash
-# Push Prisma schema to PostgreSQL
-npm run db:push
-
-# Seed Superadmin and demo company (idempotent - safe to rerun)
-npm run db:seed
+# Push Prisma schema to PostgreSQL and apply deterministic demo seed
+npm run setup
 ```
 
-**Default Seed Credentials:**
+*(Alternatively, run `npm run db:push && npm run db:seed`)*
+
+**Deterministic Development Demo Credentials:**
 - **Superadmin**: `voiceagent@yopmail.com` / `12345678`
-- **Acme Corp Owner**: `admin@acme.com` / `12345678`
+- **Organisation A (Acme Corporation)**:
+  - Owner: `admin@acme.com` / `12345678`
+  - Limit: 5.0 RPS
+  - Workspaces: `default`, `renewals`
+- **Organisation B (Beta Health Systems)**:
+  - Owner: `admin@betahealth.com` / `12345678`
+  - Limit: 8.0 RPS
+  - Workspaces: `default`, `reminders`
+
+*Note: In production (`NODE_ENV=production`), database seeding is strictly blocked unless `ALLOW_PRODUCTION_SEED=true` is explicitly configured.*
 
 ### 5.3 Run the Application & Worker
 
@@ -196,14 +206,22 @@ Open [http://localhost:3000/login](http://localhost:3000/login) to log in.
 
 ## 7. Automated Tests & Verification
 
-### 7.1 Run Full Test Suite (51/51 Passing)
+### 7.1 Run Full Test Suite (60/60 Passing)
 
 ```bash
 npm test
 ```
 
-Executes 51 automated tests across 6 comprehensive suites:
-1. `multi-tenant-auth.test.ts`: **Core security and isolation tests** proving:
+Executes 60 automated tests across 7 comprehensive suites:
+1. `regression-fixes.test.ts`: **Strict security & reliability verification** covering:
+   - Webhook security in production mode (blocks missing/default dev secrets with HTTP 500)
+   - Secret authentication strictly restricted to HTTP headers (`x-webhook-secret` and Bearer token), actively rejecting query string secrets
+   - Live call validation strictly prohibiting placeholder app IDs, connection IDs, and phone numbers
+   - Production mock telephony prevention (rejects accidental mock mode in production without explicit `ALLOW_MOCK_TELEPHONY=true`)
+   - Campaign editing via `PATCH /api/campaigns/[id]`
+   - Retrying status filtering via `GET /api/campaigns/[id]?status=RETRYING`
+   - Retries scheduled with BullMQ backoff and future `nextAttemptAt` timestamps
+2. `multi-tenant-auth.test.ts`: **Multi-tenant security and isolation tests** proving:
    - Unauthenticated API access rejection (401)
    - Superadmin company onboarding transactionality and idempotency
    - Company owner campaign viewing and execution
@@ -213,11 +231,11 @@ Executes 51 automated tests across 6 comprehensive suites:
    - Inactive company dispatch and start blocking (403)
    - Independent Redis rate-limit counters per organization
    - Duplicate onboarding prevention
-2. `campaign-api.test.ts`: Campaign CRUD, query filters, pagination, and config validation.
-3. `cohort-upload.test.ts`: Multipart CSV upload, header normalization, required variable checks, and sample CSV downloads.
-4. `rate-limiter.test.ts`: Atomic sliding-window rate limiter, rolling-second burst prevention, sub-1 RPS (0.5 RPS), fractional limits (8.5 RPS), zero/negative boundaries, and concurrent worker handling.
-5. `lifecycle-execution.test.ts`: Start/pause/resume/stop state machine, calling windows, duplicate webhook idempotency, short duration retry rules, and atomic parallel worker claims.
-6. `e2e-demo.test.ts`: Complete 12-step automated acceptance flow.
+3. `campaign-api.test.ts`: Campaign CRUD, query filters, pagination, and config validation.
+4. `cohort-upload.test.ts`: Multipart CSV upload, header normalization, required variable checks, and sample CSV downloads.
+5. `rate-limiter.test.ts`: Atomic sliding-window rate limiter, rolling-second burst prevention, sub-1 RPS (0.5 RPS), fractional limits (8.5 RPS), zero/negative boundaries, and concurrent worker handling.
+6. `lifecycle-execution.test.ts`: Start/pause/resume/stop state machine, calling windows, duplicate webhook idempotency, short duration retry rules, and atomic parallel worker claims.
+7. `e2e-demo.test.ts`: Complete 12-step automated acceptance flow.
 
 ### 7.2 Run the End-to-End Demo Script
 
@@ -229,9 +247,9 @@ Executes an automated, colorized end-to-end verification covering all 12 core ac
 
 ---
 
-## 6. Organisation-Wide Rate Limiting: Algorithm & Guarantees
+## 8. Organisation-Wide Rate Limiting: Algorithm & Guarantees
 
-### 6.1 Strict Rolling One-Second Sliding Window
+### 8.1 Strict Rolling One-Second Sliding Window
 The platform implements an **atomic Redis Sliding Window Log (`ZSET`)** executed via Lua (`src/lib/rate-limiter.ts`):
 - **Organisation Key**: Keyed per organization (`ratelimit:org:{orgId}`), shared across all campaigns, worker processes, and instances.
 - **Strict Rolling-Second Policy**: Before admitting any request at millisecond timestamp $T$, the Lua script purges all elements older than $T - 1000\text{ms}$ (`ZREMRANGEBYSCORE`).
@@ -240,9 +258,9 @@ The platform implements an **atomic Redis Sliding Window Log (`ZSET`)** executed
 
 ---
 
-## 7. Sarvam API Contract & Telephony Integration
+## 9. Sarvam API Contract & Telephony Integration
 
-### 7.1 Dispatch Contract
+### 9.1 Dispatch Contract
 Target endpoint:
 `POST https://apps.sarvam.ai/api/outbounds/v1/orgs/{org_id}/workspaces/{workspace_id}/outbounds`
 
@@ -283,13 +301,13 @@ Target endpoint:
 - `app_overrides` supports campaign-level agent overrides where configured.
 - **Strict Production Live Validation**: In live mode (`SARVAM_MOCK_MODE=false`), the client strictly requires non-placeholder values for `appId`, `connectionId`, and `callerPhoneNumber`, refusing silent placeholder substitutions.
 
-### 7.2 Safe Mock Mode vs Live Operation
+### 9.2 Safe Mock Mode vs Live Operation
 - When `SARVAM_MOCK_MODE=true` (or when `SARVAM_API_KEY` is not provided), the client simulates realistic provider responses returning `mock_att_{timestamp}_{random}` without triggering external telephony.
 - To switch to live telephony, set `SARVAM_MOCK_MODE=false` and provide a valid `SARVAM_API_KEY`.
 
 ---
 
-## 8. Webhook Outcome & Retry Rules
+## 10. Webhook Outcome & Retry Rules
 
 The webhook endpoint (`POST /api/webhooks/sarvam`) ingests telephony events:
 1. **Idempotency**: Webhook events check `callAttempt.endedAt`. Re-delivered duplicate webhooks are acknowledged immediately without duplicating retries or altering contact status.
@@ -301,7 +319,7 @@ The webhook endpoint (`POST /api/webhooks/sarvam`) ingests telephony events:
 
 ---
 
-## 9. REST API Summary
+## 11. REST API Summary
 
 A ready-to-import Postman collection is located at [`docs/campaign-manager-postman-collection.json`](docs/campaign-manager-postman-collection.json).
 
@@ -319,7 +337,7 @@ A ready-to-import Postman collection is located at [`docs/campaign-manager-postm
 | `POST` | `/api/workspaces` | Provision a new workspace within an authorized organization context. |
 | `POST` | `/api/campaigns` | Create a campaign with validated calling window, agent, and retry configuration. |
 | `GET` | `/api/campaigns` | List campaigns with contact counts, search, status filters, and pagination. |
-| `GET` | `/api/campaigns/[id]` | Get detailed campaign configuration, aggregate outcome metrics, and paginated contacts. |
+| `GET` | `/api/campaigns/[id]` | Get detailed campaign configuration, aggregate outcome metrics, and paginated contacts. Supports `?status=RETRYING`. |
 | `PATCH` | `/api/campaigns/[id]` | Update campaign configuration safely while preventing invalid state transitions. |
 | `POST` | `/api/campaigns/[id]/start` | Start campaign; validates $\ge 1$ contact, enqueues pending contacts to BullMQ. |
 | `POST` | `/api/campaigns/[id]/pause` | Pause campaign; halts pending dispatches immediately. |
@@ -331,7 +349,7 @@ A ready-to-import Postman collection is located at [`docs/campaign-manager-postm
 
 ---
 
-## 10. Reliability & Security Considerations
+## 12. Reliability & Security Considerations
 
 1. **Race Conditions Across Workers**: When parallel workers pick up jobs for the exact same contact, PostgreSQL conditional locking (`UPDATE contacts SET status = 'IN_PROGRESS' WHERE status IN ('QUEUED', 'PENDING')`) guarantees that exactly **one** worker succeeds, while subsequent workers skip execution safely.
 2. **Worker Crash & Stale Job Recovery**: If a worker process abruptly terminates or crashes while contacts are marked `IN_PROGRESS`, contacts could otherwise become stranded. The background worker runs `recoverStaleContacts(maxStaleAgeMs)` on startup and during a recurring 60-second background maintenance sweep. Contacts stranded in `IN_PROGRESS` beyond the staleness threshold without active attempts are recovered back to `PENDING` or scheduled for reconciliation.

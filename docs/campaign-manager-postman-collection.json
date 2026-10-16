@@ -17,7 +17,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"superadmin@sarvam.ai\",\n  \"password\": \"superadmin123\"\n}"
+              "raw": "{\n  \"email\": \"admin@acme.com\",\n  \"password\": \"12345678\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/auth/login",
@@ -202,12 +202,13 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}?page=1&limit=50",
+              "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}?page=1&limit=50&status=RETRYING",
               "host": ["{{baseUrl}}"],
               "path": ["api", "campaigns", "{{campaignId}}"],
               "query": [
                 { "key": "page", "value": "1" },
-                { "key": "limit", "value": "50" }
+                { "key": "limit", "value": "50" },
+                { "key": "status", "value": "RETRYING", "description": "Optional filter: PENDING, QUEUED, IN_PROGRESS, COMPLETED, FAILED, DO_NOT_CALL, RETRYING" }
               ]
             }
           }
@@ -221,7 +222,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"maxRequestsPerSecond\": 8,\n  \"retryIntervalMinutes\": 20\n}"
+              "raw": "{\n  \"name\": \"Enterprise Q4 Renewal Outreach (Updated)\",\n  \"maxRequestsPerSecond\": 8,\n  \"agentVersion\": \"2\",\n  \"retryIntervalMinutes\": 20,\n  \"retryOnBusy\": true,\n  \"retryOnNoAnswer\": true,\n  \"retryOnShortDuration\": true,\n  \"shortDurationThresholdSeconds\": 15,\n  \"dailyStartTime\": \"08:30\",\n  \"dailyEndTime\": \"18:30\",\n  \"timezone\": \"America/New_York\",\n  \"allowedDays\": [\"MONDAY\", \"TUESDAY\", \"WEDNESDAY\", \"THURSDAY\", \"FRIDAY\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/campaigns/{{campaignId}}",

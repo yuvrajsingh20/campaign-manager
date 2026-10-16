@@ -263,3 +263,23 @@ export function canAccessOrganization(user: AuthUser, organizationId: string): b
   if (user.role === Role.SUPERADMIN) return true;
   return user.organizationId === organizationId;
 }
+
+/**
+ * OWNER, ADMIN, and SUPERADMIN may change campaigns and workspaces.
+ * MEMBER is limited to read access inside their organisation.
+ */
+export function requireCampaignOperator(user: AuthUser): NextResponse<ApiResponse> | null {
+  if (user.role === Role.MEMBER) {
+    return NextResponse.json<ApiResponse>(
+      {
+        success: false,
+        error: {
+          code: "FORBIDDEN",
+          message: "Members can view campaigns but cannot create or change them.",
+        },
+      },
+      { status: 403 }
+    );
+  }
+  return null;
+}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, canAccessOrganization } from "@/lib/auth";
+import { requireAuth, canAccessOrganization, requireCampaignOperator } from "@/lib/auth";
 import { enqueueCampaignContacts } from "@/lib/queue";
 import { ApiResponse } from "@/types";
 
@@ -22,6 +22,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const auth = await requireAuth(req);
     if (auth.errorResponse) return auth.errorResponse;
     const { user } = auth;
+    const denied = requireCampaignOperator(user);
+    if (denied) return denied;
 
     const { id: campaignId, action } = await params;
 

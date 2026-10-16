@@ -4,10 +4,20 @@ import { hashPassword } from "../src/lib/auth";
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("Seeding database...");
+  console.log("-----------------------------------------------------------------");
+  console.log("🌱 CAMPAIGN MANAGER - DETERMINISTIC DEMO DATA SEED");
+  console.log("-----------------------------------------------------------------");
 
-  // 1. Seed Superadmin account idempotently from environment variables
-  const superadminEmail = process.env.SUPERADMIN_EMAIL || "voiceagent@yopmail.com";
+  // Safety Guard: Never run development demo seeds in production without explicit flag
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_PRODUCTION_SEED !== "true") {
+    console.error(
+      "❌ SEED ABORTED: Cannot seed demo accounts in production environment without explicit ALLOW_PRODUCTION_SEED=true"
+    );
+    process.exit(1);
+  }
+
+  // 1. Seed Superadmin Account
+  const superadminEmail = (process.env.SUPERADMIN_EMAIL || "voiceagent@yopmail.com").toLowerCase().trim();
   const superadminPassword = process.env.SUPERADMIN_PASSWORD || "12345678";
   const superadminPasswordHash = hashPassword(superadminPassword);
 
@@ -16,6 +26,7 @@ async function main() {
     update: {
       role: Role.SUPERADMIN,
       passwordHash: superadminPasswordHash,
+      organizationId: null,
     },
     create: {
       email: superadminEmail,
@@ -25,12 +36,13 @@ async function main() {
       organizationId: null,
     },
   });
-  console.log("Seeded Superadmin user:", superadmin.email, `(Role: ${superadmin.role})`);
+  console.log(`✔ Superadmin provisioned: ${superadmin.email} (Role: ${superadmin.role})`);
 
-  // 2. Create default demo company (Acme Corporation)
-  const organization = await prisma.organization.upsert({
+  // 2. Seed Organisation A (Acme Corporation) - 5.0 RPS limit
+  const orgA = await prisma.organization.upsert({
     where: { slug: "acme-corp" },
     update: {
+      name: "Acme Corporation",
       status: OrganizationStatus.ACTIVE,
       maxRequestsPerSecond: 5.0,
       rateLimitPerMinute: 300,
@@ -44,46 +56,125 @@ async function main() {
     },
   });
 
-  // 3. Create default workspace for Acme Corp
-  const workspace = await prisma.workspace.upsert({
+  // Workspace A1: Default Workspace
+  const wsA1 = await prisma.workspace.upsert({
     where: {
-      organizationId_slug: {
-        organizationId: organization.id,
-        slug: "default",
-      },
+      organizationId_slug: { organizationId: orgA.id, slug: "default" },
     },
-    update: {},
+    update: { name: "Default Workspace" },
     create: {
       name: "Default Workspace",
       slug: "default",
-      organizationId: organization.id,
+      organizationId: orgA.id,
     },
   });
 
-  // 4. Create default company owner user
-  const companyOwnerEmail = process.env.COMPANY_OWNER_EMAIL || "admin@acme.com";
-  const companyOwnerPassword = process.env.COMPANY_OWNER_PASSWORD || "12345678";
-  const ownerPasswordHash = hashPassword(companyOwnerPassword);
+  // Workspace A2: Collections & Renewals
+  const wsA2 = await prisma.workspace.upsert({
+    where: {
+      organizationId_slug: { organizationId: orgA.id, slug: "renewals" },
+    },
+    update: { name: "Collections & Renewals" },
+    create: {
+      name: "Collections & Renewals",
+      slug: "renewals",
+      organizationId: orgA.id,
+    },
+  });
 
-  const owner = await prisma.user.upsert({
-    where: { email: companyOwnerEmail },
+  // Owner A: Acme Owner
+  const ownerAEmail = (process.env.COMPANY_OWNER_EMAIL || "admin@acme.com").toLowerCase().trim();
+  const ownerAPassword = process.env.COMPANY_OWNER_PASSWORD || "12345678";
+  const ownerAPasswordHash = hashPassword(ownerAPassword);
+
+  const ownerA = await prisma.user.upsert({
+    where: { email: ownerAEmail },
     update: {
       role: Role.OWNER,
-      organizationId: organization.id,
-      passwordHash: ownerPasswordHash,
+      organizationId: orgA.id,
+      passwordHash: ownerAPasswordHash,
     },
     create: {
-      email: companyOwnerEmail,
+      email: ownerAEmail,
       name: "Acme Owner",
       role: Role.OWNER,
-      organizationId: organization.id,
-      passwordHash: ownerPasswordHash,
+      organizationId: orgA.id,
+      passwordHash: ownerAPasswordHash,
     },
   });
 
-  console.log("Seeded organization:", organization.name, `(${organization.id})`);
-  console.log("Seeded workspace:", workspace.name, `(${workspace.id})`);
-  console.log("Seeded company owner:", owner.email, `(${owner.id})`);
+  console.log(`✔ Org A provisioned: ${orgA.name} (${orgA.slug}) | Workspaces: [${wsA1.name}, ${wsA2.name}] | Owner: ${ownerA.email}`);
+
+  // 3. Seed Organisation B (Beta Health Systems) - 8.0 RPS limit
+  const orgB = await prisma.organization.upsert({
+    where: { slug: "beta-health" },
+    update: {
+      name: "Beta Health Systems",
+      status: OrganizationStatus.ACTIVE,
+      maxRequestsPerSecond: 8.0,
+      rateLimitPerMinute: 480,
+    },
+    create: {
+      name: "Beta Health Systems",
+      slug: "beta-health",
+      status: OrganizationStatus.ACTIVE,
+      maxRequestsPerSecond: 8.0,
+      rateLimitPerMinute: 480,
+    },
+  });
+
+  // Workspace B1: Default Workspace
+  const wsB1 = await prisma.workspace.upsert({
+    where: {
+      organizationId_slug: { organizationId: orgB.id, slug: "default" },
+    },
+    update: { name: "Default Workspace" },
+    create: {
+      name: "Default Workspace",
+      slug: "default",
+      organizationId: orgB.id,
+    },
+  });
+
+  // Workspace B2: Patient Reminders
+  const wsB2 = await prisma.workspace.upsert({
+    where: {
+      organizationId_slug: { organizationId: orgB.id, slug: "reminders" },
+    },
+    update: { name: "Patient Reminders" },
+    create: {
+      name: "Patient Reminders",
+      slug: "reminders",
+      organizationId: orgB.id,
+    },
+  });
+
+  // Owner B: Beta Health Owner
+  const ownerBEmail = (process.env.ORG_B_OWNER_EMAIL || "admin@betahealth.com").toLowerCase().trim();
+  const ownerBPassword = process.env.ORG_B_OWNER_PASSWORD || "12345678";
+  const ownerBPasswordHash = hashPassword(ownerBPassword);
+
+  const ownerB = await prisma.user.upsert({
+    where: { email: ownerBEmail },
+    update: {
+      role: Role.OWNER,
+      organizationId: orgB.id,
+      passwordHash: ownerBPasswordHash,
+    },
+    create: {
+      email: ownerBEmail,
+      name: "Beta Health Owner",
+      role: Role.OWNER,
+      organizationId: orgB.id,
+      passwordHash: ownerBPasswordHash,
+    },
+  });
+
+  console.log(`✔ Org B provisioned: ${orgB.name} (${orgB.slug}) | Workspaces: [${wsB1.name}, ${wsB2.name}] | Owner: ${ownerB.email}`);
+
+  console.log("-----------------------------------------------------------------");
+  console.log("✨ Seed completed idempotently and successfully!");
+  console.log("-----------------------------------------------------------------");
 }
 
 main()

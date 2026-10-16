@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Papa from "papaparse";
 import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, canAccessOrganization } from "@/lib/auth";
+import { requireAuth, canAccessOrganization, requireCampaignOperator } from "@/lib/auth";
 import { normalizePhoneNumber } from "@/lib/validations/campaign";
 import { ApiResponse, CohortUploadSummary } from "@/types";
 
@@ -31,6 +31,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const auth = await requireAuth(req);
     if (auth.errorResponse) return auth.errorResponse;
     const { user } = auth;
+    const denied = requireCampaignOperator(user);
+    if (denied) return denied;
 
     const { id: campaignId } = await params;
 

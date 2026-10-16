@@ -44,15 +44,29 @@ function mapCallAttemptStatus(status: string): CallAttemptStatus {
  */
 export async function POST(req: NextRequest) {
   try {
-    // Webhook Security: Check optional secret token if configured
+    // Webhook Security: Enforce secret verification
     const expectedSecret = process.env.WEBHOOK_SECRET;
-    if (expectedSecret && expectedSecret !== "local-dev-webhook-secret") {
+    const isProduction = process.env.NODE_ENV === "production";
+
+    // In production, reject if secret is missing or set to the default development secret
+    if (isProduction && (!expectedSecret || expectedSecret === "local-dev-webhook-secret")) {
+      console.error("[Webhook] WEBHOOK_SECRET is not configured or using default dev secret in production environment.");
+      return NextResponse.json(
+        { success: false, error: "Webhook secret is not configured securely for production." },
+        { status: 500 }
+      );
+    }
+
+    if (expectedSecret && (isProduction || expectedSecret !== "local-dev-webhook-secret")) {
+      // Security: Webhook secrets must ONLY be passed via HTTP headers (x-webhook-secret or Authorization: Bearer).
+      // Secrets are never accepted via query strings to prevent leakage in server access logs and URLs.
       const incomingSecret =
         req.headers.get("x-webhook-secret") ||
-        req.headers.get("authorization")?.replace("Bearer ", "");
-      if (incomingSecret !== expectedSecret) {
+        req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+
+      if (!incomingSecret || incomingSecret !== expectedSecret) {
         return NextResponse.json(
-          { success: false, error: "Invalid webhook secret" },
+          { success: false, error: "Invalid or missing webhook secret header" },
           { status: 401 }
         );
       }
@@ -183,7 +197,7 @@ export async function POST(req: NextRequest) {
       await prisma.contact.update({
         where: { id: contact.id },
         data: {
-          status: "PENDING",
+          status: "QUEUED",
           nextAttemptAt: nextAttemptDate,
         },
       });

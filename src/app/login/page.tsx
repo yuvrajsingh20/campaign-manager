@@ -135,30 +135,51 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          {/* Quick Demo Credentials */}
-          <div className="pt-4 border-t border-slate-200 space-y-2 text-xs">
-            <span className="block font-medium text-slate-500 text-[11px]">
-              Demo accounts (Password: 12345678):
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => fillCredentials("voiceagent@yopmail.com", "12345678")}
-                className="p-2.5 border border-slate-200 bg-slate-50/60 hover:bg-slate-100 hover:border-slate-300 rounded-lg text-left transition-colors cursor-pointer"
-              >
-                <div className="font-semibold text-slate-900 text-xs">Superadmin</div>
-                <div className="text-slate-500 truncate text-[11px]">voiceagent@yopmail.com</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials("admin@acme.com", "12345678")}
-                className="p-2.5 border border-slate-200 bg-slate-50/60 hover:bg-slate-100 hover:border-slate-300 rounded-lg text-left transition-colors cursor-pointer"
-              >
-                <div className="font-semibold text-slate-900 text-xs">Acme Corp Owner</div>
-                <div className="text-slate-500 truncate text-[11px]">admin@acme.com</div>
-              </button>
+          {/* Quick Demo Credentials (Restricted to Development / Explicit Demo Mode) */}
+          {(process.env.NODE_ENV !== "production" ||
+            process.env.NEXT_PUBLIC_ENABLE_DEMO_LOGIN === "true") && (
+            <div className="pt-4 border-t border-slate-200 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700 text-[11px]">
+                  Local development demo accounts:
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">Dev only</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={() => fillCredentials("voiceagent@yopmail.com", "12345678")}
+                  className="p-2 border border-slate-200 bg-slate-50/70 hover:bg-slate-100 hover:border-slate-300 rounded-lg text-left transition-colors cursor-pointer flex items-center justify-between"
+                >
+                  <div>
+                    <div className="font-semibold text-slate-900 text-xs">VoiceAgent Superadmin</div>
+                    <div className="text-slate-500 text-[11px]">voiceagent@yopmail.com</div>
+                  </div>
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                    SUPERADMIN
+                  </span>
+                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fillCredentials("admin@acme.com", "12345678")}
+                    className="p-2 border border-slate-200 bg-slate-50/70 hover:bg-slate-100 hover:border-slate-300 rounded-lg text-left transition-colors cursor-pointer"
+                  >
+                    <div className="font-semibold text-slate-900 text-xs">Acme Corp (Org A)</div>
+                    <div className="text-slate-500 truncate text-[11px]">admin@acme.com</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fillCredentials("admin@betahealth.com", "12345678")}
+                    className="p-2 border border-slate-200 bg-slate-50/70 hover:bg-slate-100 hover:border-slate-300 rounded-lg text-left transition-colors cursor-pointer"
+                  >
+                    <div className="font-semibold text-slate-900 text-xs">Beta Health (Org B)</div>
+                    <div className="text-slate-500 truncate text-[11px]">admin@betahealth.com</div>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

@@ -61,6 +61,9 @@ export default function Home() {
           return;
         }
 
+        // Pre-warm workspaces for instant modal display
+        fetch("/api/workspaces").catch(() => {});
+
         const result = await res.json();
         if (!ignore && result.success && result.data) {
           setCampaigns(result.data.items);
@@ -86,6 +89,7 @@ export default function Home() {
   };
 
   const orgRps = currentUser?.organization?.maxRequestsPerSecond ?? 5.0;
+  const canManage = currentUser?.role !== "MEMBER";
 
   return (
     <DashboardLayout
@@ -102,14 +106,16 @@ export default function Home() {
           >
             Refresh
           </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => setIsCreateOpen(true)}
-            icon={<Plus className="w-3.5 h-3.5" />}
-          >
-            Create campaign
-          </Button>
+          {canManage && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setIsCreateOpen(true)}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
+              Create campaign
+            </Button>
+          )}
         </div>
       }
     >
@@ -225,7 +231,7 @@ export default function Home() {
                 All campaigns
               </h2>
               <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">
-                {campaigns.length}
+                {metrics.totalCampaigns}
               </span>
             </div>
           </div>
@@ -235,12 +241,13 @@ export default function Home() {
               title="No campaigns found"
               description="No voice campaigns have been created yet. Set up a campaign with an agent configuration, dialing schedule, and cohort to begin."
               icon={Megaphone}
-              actionLabel="Create first campaign"
-              onCreateCampaign={() => setIsCreateOpen(true)}
+              actionLabel={canManage ? "Create first campaign" : undefined}
+              onCreateCampaign={canManage ? () => setIsCreateOpen(true) : undefined}
             />
           ) : (
             <CampaignList
               campaigns={campaigns}
+              canManage={canManage}
               onUploadCohort={(campaign) => setSelectedCohortCampaign(campaign)}
             />
           )}

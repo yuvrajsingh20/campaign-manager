@@ -31,9 +31,10 @@ export interface CampaignListItem {
 interface CampaignListProps {
   campaigns: CampaignListItem[];
   onUploadCohort: (campaign: CampaignListItem) => void;
+  canManage?: boolean;
 }
 
-export function CampaignList({ campaigns, onUploadCohort }: CampaignListProps) {
+export function CampaignList({ campaigns, onUploadCohort, canManage = true }: CampaignListProps) {
   return (
     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
       <div className="overflow-x-auto">
@@ -111,14 +112,16 @@ export function CampaignList({ campaigns, onUploadCohort }: CampaignListProps) {
 
                 <td className="py-3.5 px-4 text-right whitespace-nowrap">
                   <div className="inline-flex items-center gap-2">
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      onClick={() => onUploadCohort(campaign)}
-                      icon={<UploadCloud className="w-3.5 h-3.5" />}
-                    >
-                      Cohort
-                    </Button>
+                    {canManage && (
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        onClick={() => onUploadCohort(campaign)}
+                        icon={<UploadCloud className="w-3.5 h-3.5" />}
+                      >
+                        Cohort
+                      </Button>
+                    )}
                     <Link href={`/campaigns/${campaign.id}`}>
                       <Button
                         size="xs"

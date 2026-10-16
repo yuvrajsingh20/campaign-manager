@@ -48,10 +48,14 @@ export class SarvamClient {
     this.baseUrl =
       options?.baseUrl || process.env.SARVAM_API_BASE_URL || "https://apps.sarvam.ai";
     // Check if explicitly passed or set in environment
+    const isProduction = process.env.NODE_ENV === "production";
     if (options?.mockMode !== undefined) {
       this.isMockMode = options.mockMode;
     } else if (process.env.SARVAM_MOCK_MODE === "false") {
       this.isMockMode = false;
+    } else if (isProduction) {
+      // In production, mock mode requires explicit ALLOW_MOCK_TELEPHONY flag
+      this.isMockMode = process.env.SARVAM_MOCK_MODE === "true" && process.env.ALLOW_MOCK_TELEPHONY === "true";
     } else {
       this.isMockMode =
         process.env.SARVAM_MOCK_MODE === "true" ||

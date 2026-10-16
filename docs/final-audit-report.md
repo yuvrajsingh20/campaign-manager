@@ -1,5 +1,7 @@
 # Comprehensive Technical Audit Report: Campaign Manager
 
+> **Current status (17 Oct 2026):** The findings below are the 15 Oct audit. Authentication, the `SUPERADMIN` role, organisation isolation, `npm run setup`, campaign editing, and the regression suite are now implemented. Seeded demo accounts are superadmin `voiceagent@yopmail.com` and organisation owners `admin@acme.com` and `admin@betahealth.com` (password `12345678`). Use the README for the current API and test inventory. Do not treat the “authentication missing” verdict in this file as the current state of the project.
+
 **Project Location:** `/home/yuvraj/campaign-manager`  
 **Date of Audit:** October 15, 2026  
 **Auditor:** Independent Senior Software Engineer & Technical Reviewer  

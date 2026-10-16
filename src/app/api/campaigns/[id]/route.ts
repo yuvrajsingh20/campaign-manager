@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, canAccessOrganization } from "@/lib/auth";
+import { requireAuth, canAccessOrganization, requireCampaignOperator } from "@/lib/auth";
 import { updateCampaignSchema, contactFilterSchema } from "@/lib/validations/campaign";
-import { Role } from "@prisma/client";
+import { Role, ContactStatus } from "@prisma/client";
 import { ApiResponse, PaginatedResult } from "@/types";
 
 
@@ -89,9 +89,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const contactStatusFilter =
+      status === "RETRYING"
+        ? { status: { in: ["PENDING" as const, "QUEUED" as const] }, retryCount: { gt: 0 } }
+        : status
+        ? { status: status as ContactStatus }
+        : {};
+
     const contactWhere = {
       campaignId: id,
-      ...(status ? { status } : {}),
+      ...contactStatusFilter,
       ...(search
         ? {
             OR: [
@@ -164,8 +171,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     const totalPages = Math.ceil(totalContacts / limit) || 1;
 
-    const contactsPaginated: PaginatedResult<(typeof contacts)[0]> = {
-      items: contacts,
+    const contactsWithComputed = contacts.map((c) => ({
+      ...c,
+      isRetrying: c.retryCount > 0 && (c.status === "PENDING" || c.status === "QUEUED"),
+    }));
+
+    const contactsPaginated: PaginatedResult<(typeof contactsWithComputed)[0]> = {
+      items: contactsWithComputed,
       pagination: {
         page,
         limit,
@@ -220,6 +232,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const auth = await requireAuth(req);
     if (auth.errorResponse) return auth.errorResponse;
     const { user } = auth;
+    const denied = requireCampaignOperator(user);
+    if (denied) return denied;
 
     const { id } = await params;
     const body = await req.json();

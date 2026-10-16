@@ -94,9 +94,13 @@ export async function enqueueContactRetry(
 ): Promise<void> {
   const queue = getOutboundCallQueue();
 
+  // Scheduled retry marks contact as QUEUED with explicit nextAttemptAt timestamp
   await prisma.contact.update({
     where: { id: contactId },
-    data: { status: "QUEUED" },
+    data: {
+      status: "QUEUED",
+      ...(delayMs > 0 ? { nextAttemptAt: new Date(Date.now() + delayMs) } : {}),
+    },
   });
 
   await queue.add(

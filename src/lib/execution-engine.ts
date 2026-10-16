@@ -78,18 +78,10 @@ export async function processOutboundCallJob(
   const windowCheck = isCallingWindowOpen(campaign);
   if (!windowCheck.isAllowed) {
     const delay = windowCheck.delayMs || 3600 * 1000;
-    const nextDate = new Date(Date.now() + delay);
 
-    // Reschedule in database and queue
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        status: "PENDING",
-        nextAttemptAt: nextDate,
-      },
-    });
-
-    // Re-enqueue for next window
+    // Keep the contact claimed as QUEUED and schedule one delayed job.
+    // A separate PENDING write here would release the contact before the retry
+    // job exists, so a second worker could dial the same number.
     await enqueueContactRetry(campaignId, contactId, contact.retryCount + 1, delay);
 
     return {
@@ -164,22 +156,61 @@ export async function processOutboundCallJob(
   // Assignment PDF explicitly specifies "app_type": "agent"
   const appType = campaign.agentType === "outbound_voice" ? "agent" : campaign.agentType || "agent";
 
-  // In live production mode, validate configuration strictly rather than silently substituting fake placeholders
-  const isMock =
-    process.env.SARVAM_MOCK_MODE === "true" ||
-    process.env.NODE_ENV === "test" ||
-    !process.env.SARVAM_API_KEY ||
-    process.env.SARVAM_API_KEY === "your-sarvam-api-key-here";
-
-  if (!isMock && (!appId || !connId || !callerNumber)) {
-    const missing = [
-      !appId && "agentAppId",
-      !connId && "connectionId",
-      !callerNumber && "callerPhoneNumber",
-    ].filter(Boolean);
-    throw new Error(
-      `Cannot dispatch live call: missing required campaign configuration: ${missing.join(", ")}`
+  // Helper to detect development/demo placeholder strings
+  const isPlaceholderValue = (val?: string | null) => {
+    if (!val) return true;
+    const lower = val.trim().toLowerCase();
+    return (
+      lower.startsWith("mock_") ||
+      lower.includes("placeholder") ||
+      lower.includes("example") ||
+      lower.startsWith("dummy") ||
+      lower === "agent_xxxxxxxx" ||
+      lower === "agent_placeholder" ||
+      lower === "conn_placeholder" ||
+      lower === "+10000000000" ||
+      lower === "+0000000000" ||
+      lower === "+1234567890" ||
+      lower === "+12345678901"
     );
+  };
+
+  const isProduction = process.env.NODE_ENV === "production";
+  if (isProduction && process.env.SARVAM_MOCK_MODE === "true" && process.env.ALLOW_MOCK_TELEPHONY !== "true") {
+    throw new Error(
+      "Cannot use mock telephony in production environment without explicit ALLOW_MOCK_TELEPHONY=true"
+    );
+  }
+
+  // In live mode, validate configuration strictly rather than silently substituting fake placeholders
+  const isMock =
+    !isProduction
+      ? process.env.SARVAM_MOCK_MODE === "true" ||
+        process.env.NODE_ENV === "test" ||
+        !process.env.SARVAM_API_KEY ||
+        process.env.SARVAM_API_KEY === "your-sarvam-api-key-here"
+      : process.env.SARVAM_MOCK_MODE === "true" && process.env.ALLOW_MOCK_TELEPHONY === "true";
+
+  if (!isMock) {
+    const invalidConfig: string[] = [];
+    if (!appId || isPlaceholderValue(appId)) {
+      invalidConfig.push("agentAppId must be a valid Sarvam agent ID (cannot be empty or placeholder)");
+    }
+    if (!connId || isPlaceholderValue(connId)) {
+      invalidConfig.push("connectionId must be a valid telephony connection trunk (cannot be empty or placeholder)");
+    }
+    if (!callerNumber || isPlaceholderValue(callerNumber)) {
+      invalidConfig.push("callerPhoneNumber must be a valid E.164 phone number (cannot be placeholder)");
+    }
+    if (!process.env.SARVAM_API_KEY || process.env.SARVAM_API_KEY === "your-sarvam-api-key-here") {
+      invalidConfig.push("SARVAM_API_KEY must be configured with a valid provider key");
+    }
+
+    if (invalidConfig.length > 0) {
+      throw new Error(
+        `Cannot dispatch live call: invalid campaign telephony configuration:\n- ${invalidConfig.join("\n- ")}`
+      );
+    }
   }
 
   const payload = {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth";
+import { requireAuth, requireCampaignOperator } from "@/lib/auth";
 import { createCampaignSchema, campaignFilterSchema } from "@/lib/validations/campaign";
 import { Role } from "@prisma/client";
 import { ApiResponse, PaginatedResult } from "@/types";
@@ -15,6 +15,8 @@ export async function POST(req: NextRequest) {
     const auth = await requireAuth(req);
     if (auth.errorResponse) return auth.errorResponse;
     const { user } = auth;
+    const denied = requireCampaignOperator(user);
+    if (denied) return denied;
 
     const body = await req.json();
     const parseResult = createCampaignSchema.safeParse(body);

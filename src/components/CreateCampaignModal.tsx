@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ChevronLeft,
   Sparkles,
+  Loader2,
 } from "lucide-react";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
@@ -23,6 +24,9 @@ interface WorkspaceOption {
     maxRequestsPerSecond: number;
   };
 }
+
+// Module-level cache to keep workspaces available instantly without re-fetching delays
+let cachedWorkspaces: WorkspaceOption[] | null = null;
 
 interface CreateCampaignModalProps {
   isOpen: boolean;
@@ -54,15 +58,15 @@ export function CreateCampaignModal({
   onCreated,
 }: CreateCampaignModalProps) {
   const [currentStep, setCurrentStep] = useState(1);
-  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([]);
-  const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>(() => cachedWorkspaces ?? []);
+  const [loadingWorkspaces, setLoadingWorkspaces] = useState(() => !cachedWorkspaces);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Form State: Step 1 (Identity & Workspace)
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [workspaceId, setWorkspaceId] = useState("");
+  const [workspaceId, setWorkspaceId] = useState(() => cachedWorkspaces?.[0]?.id ?? "");
 
   // Step 2: Agent configuration & Telephony
   const [agentAppId, setAgentAppId] = useState("");
@@ -102,12 +106,17 @@ export function CreateCampaignModal({
     if (isOpen) {
       async function loadWorkspaces() {
         try {
-          setLoadingWorkspaces(true);
+          if (!cachedWorkspaces) {
+            setLoadingWorkspaces(true);
+          }
           const res = await fetch("/api/workspaces");
           const data = await res.json();
-          if (!ignore && data.success && data.data.length > 0) {
+          if (!ignore && data.success && Array.isArray(data.data)) {
+            cachedWorkspaces = data.data;
             setWorkspaces(data.data);
-            setWorkspaceId((prev) => (prev ? prev : data.data[0].id));
+            if (data.data.length > 0) {
+              setWorkspaceId((prev) => (prev ? prev : data.data[0].id));
+            }
           }
         } catch (err) {
           console.error("Error loading workspaces:", err);
@@ -242,7 +251,7 @@ export function CreateCampaignModal({
     >
       <div className="space-y-6">
         {/* Step Progress Bar */}
-        <div className="flex items-center justify-between border-b border-slate-200 pb-4 overflow-x-auto gap-2">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3 overflow-x-auto gap-2 no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           {STEPS.map((step) => {
             const Icon = step.icon;
             const isCurrent = currentStep === step.id;
@@ -256,7 +265,7 @@ export function CreateCampaignModal({
                     setCurrentStep(step.id);
                   }
                 }}
-                className={`flex items-center gap-2 py-1 px-2.5 rounded-lg text-xs font-medium transition-colors shrink-0 cursor-pointer ${
+                className={`flex items-center gap-1.5 sm:gap-2 py-1 px-2 sm:px-2.5 rounded-lg text-xs font-medium transition-colors shrink-0 cursor-pointer ${
                   isCurrent
                     ? "bg-blue-50 text-blue-700"
                     : isCompleted
@@ -265,7 +274,7 @@ export function CreateCampaignModal({
                 }`}
               >
                 <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
+                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-xs shrink-0 ${
                     isCurrent
                       ? "bg-blue-600 text-white"
                       : isCompleted
@@ -275,7 +284,7 @@ export function CreateCampaignModal({
                 >
                   {isCompleted ? "✓" : <Icon className="w-3 h-3" />}
                 </div>
-                <span className="hidden sm:inline">{step.title}</span>
+                <span className="whitespace-nowrap">{step.title}</span>
               </button>
             );
           })}
@@ -311,8 +320,43 @@ export function CreateCampaignModal({
               <label className="block text-xs font-medium text-slate-700 mb-1.5">
                 Target workspace *
               </label>
-              {loadingWorkspaces ? (
-                <div className="py-2 text-xs text-slate-500">Loading workspaces...</div>
+              {loadingWorkspaces && workspaces.length === 0 ? (
+                <div className="relative">
+                  <select
+                    disabled
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-400 cursor-not-allowed appearance-none"
+                  >
+                    <option>Loading workspaces...</option>
+                  </select>
+                  <div className="absolute right-3 top-2.5">
+                    <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
+                  </div>
+                </div>
+              ) : workspaces.length === 0 ? (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center justify-between">
+                  <span>No workspaces found for your account.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      cachedWorkspaces = null;
+                      setLoadingWorkspaces(true);
+                      fetch("/api/workspaces")
+                        .then((r) => r.json())
+                        .then((d) => {
+                          if (d?.success && Array.isArray(d?.data)) {
+                            cachedWorkspaces = d.data;
+                            setWorkspaces(d.data);
+                            if (d.data.length > 0) setWorkspaceId(d.data[0].id);
+                          }
+                        })
+                        .catch(console.error)
+                        .finally(() => setLoadingWorkspaces(false));
+                    }}
+                    className="font-medium text-amber-900 underline hover:text-amber-950 cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </div>
               ) : (
                 <select
                   value={workspaceId}
