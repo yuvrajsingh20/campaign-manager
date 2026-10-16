@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, canAccessOrganization } from "@/lib/auth";
 import { enqueueCampaignContacts } from "@/lib/queue";
 import { ApiResponse } from "@/types";
+
 
 interface RouteParams {
   params: Promise<{ id: string; action: string }>;
@@ -13,9 +15,14 @@ type LifecycleAction = (typeof VALID_ACTIONS)[number];
 /**
  * POST /api/campaigns/[id]/[action]
  * Controls campaign lifecycle execution: start, pause, resume, stop.
+ * Enforces server session authentication, tenant isolation, and inactive organization restrictions.
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const { id: campaignId, action } = await params;
 
     if (!VALID_ACTIONS.includes(action as LifecycleAction)) {
@@ -34,6 +41,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
       include: {
+        organization: true,
         _count: {
           select: { contacts: true },
         },
@@ -50,6 +58,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           },
         },
         { status: 404 }
+      );
+    }
+
+    // Tenant Isolation Guard
+    if (!canAccessOrganization(user, campaign.organizationId)) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: `Campaign with id '${campaignId}' not found.`,
+          },
+        },
+        { status: 404 }
+      );
+    }
+
+    // Inactive Organization Enforcement
+    if (campaign.organization.status === "INACTIVE" && (action === "start" || action === "resume")) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "ORGANIZATION_INACTIVE",
+            message: "Cannot start or resume campaigns for an inactive organization.",
+          },
+        },
+        { status: 400 }
       );
     }
 
@@ -98,7 +134,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         data: { status: "RUNNING" },
       });
 
-      // Enqueue contacts to BullMQ
+      // Enqueue eligible contacts
       const enqueuedCount = await enqueueCampaignContacts(campaignId);
 
       return NextResponse.json<ApiResponse>({
@@ -246,4 +282,3 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     );
   }
 }
-

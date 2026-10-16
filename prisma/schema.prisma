@@ -11,9 +11,15 @@ datasource db {
 }
 
 enum Role {
+  SUPERADMIN
   OWNER
   ADMIN
   MEMBER
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
 }
 
 enum CampaignStatus {
@@ -47,12 +53,14 @@ enum CallAttemptStatus {
 }
 
 model Organization {
-  id                 String      @id @default(cuid())
+  id                 String             @id @default(cuid())
   name               String
-  slug               String      @unique
-  rateLimitPerMinute Int         @default(60)
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  slug               String             @unique
+  status             OrganizationStatus @default(ACTIVE)
+  rateLimitPerMinute Int                @default(60)
+  maxRequestsPerSecond Float            @default(5.0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   workspaces         Workspace[]
   users              User[]
@@ -79,17 +87,33 @@ model Workspace {
 }
 
 model User {
-  id             String       @id @default(cuid())
-  email          String       @unique
+  id             String        @id @default(cuid())
+  email          String        @unique
   name           String?
-  role           Role         @default(MEMBER)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  passwordHash   String?
+  role           Role          @default(MEMBER)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  sessions       Session[]
 
   @@index([organizationId])
   @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([sessionToken])
+  @@map("sessions")
 }
 
 model Campaign {

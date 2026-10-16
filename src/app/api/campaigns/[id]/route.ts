@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, canAccessOrganization } from "@/lib/auth";
 import { updateCampaignSchema, contactFilterSchema } from "@/lib/validations/campaign";
+import { Role } from "@prisma/client";
 import { ApiResponse, PaginatedResult } from "@/types";
+
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -9,10 +12,14 @@ interface RouteParams {
 
 /**
  * GET /api/campaigns/[id]
- * Fetches campaign details and its associated contacts (paginated).
+ * Fetches campaign details and its associated contacts (paginated), scoped to authenticated tenant.
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const { id } = await params;
     const { searchParams } = new URL(req.url);
 
@@ -56,6 +63,20 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!campaign) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: `Campaign with id '${id}' was not found.`,
+          },
+        },
+        { status: 404 }
+      );
+    }
+
+    // Tenant Isolation Guard: Verify access to campaign's organization
+    if (!canAccessOrganization(user, campaign.organizationId)) {
       return NextResponse.json<ApiResponse>(
         {
           success: false,
@@ -134,10 +155,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
 /**
  * PATCH /api/campaigns/[id]
- * Updates campaign configuration safely while validating state rules.
+ * Updates campaign configuration safely while validating state rules and tenant isolation.
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const { id } = await params;
     const body = await req.json();
 
@@ -158,6 +183,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const existing = await prisma.campaign.findUnique({
       where: { id },
+      include: { organization: true },
     });
 
     if (!existing) {
@@ -170,6 +196,34 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           },
         },
         { status: 404 }
+      );
+    }
+
+    // Tenant Isolation Guard
+    if (!canAccessOrganization(user, existing.organizationId)) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: `Campaign with id '${id}' not found.`,
+          },
+        },
+        { status: 404 }
+      );
+    }
+
+    // Inactive Organization Guard
+    if (user.role !== Role.SUPERADMIN && existing.organization.status === "INACTIVE") {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "ORGANIZATION_INACTIVE",
+            message: "Cannot modify campaigns for an inactive organization.",
+          },
+        },
+        { status: 403 }
       );
     }
 
@@ -273,4 +327,3 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     );
   }
 }
-

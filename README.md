@@ -81,7 +81,7 @@ cp .env.example .env
 
 | Variable | Description | Default / Example |
 | :--- | :--- | :--- |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:StrongPassword123@localhost:5432/campaign_manager?schema=public` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/campaign_manager?schema=public` |
 | `REDIS_URL` | Redis connection URI | `redis://localhost:6379` |
 | `SARVAM_API_KEY` | Sarvam AI outbound call API key | Leave placeholder for Mock Mode, or set real key for Live |
 | `SARVAM_API_BASE_URL` | Base URL for Sarvam API | `https://apps.sarvam.ai` |
@@ -89,60 +89,135 @@ cp .env.example .env
 | `WEBHOOK_SECRET` | Secret token to authenticate incoming webhooks | `local-dev-webhook-secret` |
 | `NEXT_PUBLIC_APP_URL` | Application root URL for webhooks | `http://localhost:3000` |
 | `PORT` | Web server port | `3000` |
+| `SUPERADMIN_EMAIL` | Configurable Superadmin login identity | `voiceagent@yopmail.com` |
+| `SUPERADMIN_PASSWORD` | Configurable Superadmin password | `12345678` |
 
 ---
 
-## 4. Quick Start & Startup Instructions
+## 4. Multi-Tenant Architecture & Roles
 
-### 4.1 Start Infrastructure Containers
+The system enforces strict multi-tenancy with server-side session resolution and organization-level resource isolation.
 
-Start PostgreSQL and Redis with persistent volumes and health checks via Docker Compose:
+### 4.1 Role Permissions Matrix
+
+| Role | Scope | Permissions |
+| :--- | :--- | :--- |
+| `SUPERADMIN` | Platform-wide | Onboard companies, manage status (ACTIVE/INACTIVE), update organization RPS limits, view platform aggregate metrics, inspect company workspaces and campaigns. |
+| `OWNER` | Own Organization | Full management of campaigns, workspaces, cohorts, CSV uploads, and lifecycle execution within their company. |
+| `ADMIN` | Own Organization | Create, update, upload cohorts, and operate campaigns within their company's assigned workspaces. |
+| `MEMBER` | Own Workspace | View campaigns and cohort progress within their authorized workspace. |
+
+### 4.2 Security & Tenant Isolation Guarantees
+1. **Server-Side Session Resolution**: User identity and company affiliation are derived exclusively from verified session tokens stored in secure, `httpOnly`, `sameSite: "lax"` cookies (`session_token`).
+2. **Never Trust Client IDs**: Client-supplied `organizationId` or `workspaceId` headers/payloads are never trusted as proof of authorization. All queries and mutations verify ownership through authoritative database relations.
+3. **Cross-Tenant Concealment (404/403)**: Attempts by Organization A to view, modify, or upload contacts to Organization B's resources return `404 Not Found` (preventing information disclosure regarding foreign resource IDs) or `403 Forbidden`.
+4. **Inactive Company Enforcement**: Inactive organizations (`status: INACTIVE`) are blocked by both API endpoints and the background worker engine from dispatching calls or starting campaigns.
+5. **Independent Redis Rate Limits**: Each organization has an isolated sliding-window counter keyed by `ratelimit:org:{orgId}`, dynamically configured by the Superadmin (`maxRequestsPerSecond`).
+
+---
+
+## 5. Quick Start & Startup Instructions
+
+### 5.1 Start Infrastructure Containers
+
+Start PostgreSQL and Redis with persistent volumes via Docker Compose (or use existing local services):
 
 ```bash
 docker compose up -d
 docker compose ps
 ```
 
-### 4.2 Database Initialization & Seeding
+### 5.2 Database Initialization & Idempotent Seeding
 
 ```bash
 # Push Prisma schema to PostgreSQL
 npm run db:push
 
-# Seed default organization and workspace
+# Seed Superadmin and demo company (idempotent - safe to rerun)
 npm run db:seed
 ```
 
-### 4.3 Run the Application & Worker
+**Default Seed Credentials:**
+- **Superadmin**: `voiceagent@yopmail.com` / `12345678`
+- **Acme Corp Owner**: `admin@acme.com` / `12345678`
+
+### 5.3 Run the Application & Worker
 
 In separate terminal sessions:
 
 ```bash
-# Terminal 1: Next.js Web Server (Dashboard & REST APIs)
+# Terminal 1: Next.js Web Server (Port 3000)
 npm run dev
 
 # Terminal 2: BullMQ Background Worker (Outbound call dispatcher)
 npm run worker
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to access the Campaign Manager UI.
+Open [http://localhost:3000/login](http://localhost:3000/login) to log in.
 
 ---
 
-## 5. Automated Tests & Demo Script
+## 6. Local Demo Walkthrough
 
-### 5.1 Run Full Test Suite (40/40 Passing)
+### 6.1 Superadmin Login & Dashboard
+1. Navigate to `/login` and select **"Superadmin Demo"** (or enter `voiceagent@yopmail.com` / `12345678`).
+2. You will be redirected to the **Superadmin Dashboard** (`/admin`).
+3. View real-time database metrics: Total Companies, Total Workspaces, and Total Campaigns.
+4. Search companies by name.
+5. Adjust permitted requests-per-second (RPS) limits inline.
+6. Toggle company status between `ACTIVE` and `INACTIVE` (instantly blocks background dispatches).
+
+### 6.2 Onboarding a New Company
+1. In the Superadmin Dashboard, click **"Onboard Company"**.
+2. Fill in:
+   - Company Name (e.g. `Globex Corporation`)
+   - Owner Name (e.g. `Hank Scorpio`)
+   - Owner Email (e.g. `hank@globex.com`)
+   - Permitted Requests-per-Second Limit (e.g. `10`)
+   - Password (defaults to `12345678`)
+3. Submit the modal. The onboarding transaction atomically creates:
+   - The `Organization` record
+   - A default `Workspace`
+   - The company `OWNER` user account with hashed password
+4. The temporary password and login instructions are displayed for the Superadmin.
+
+### 6.3 Company Owner Experience
+1. Click **"Sign Out"** in the navigation bar.
+2. Sign in as the company owner (e.g. `admin@acme.com` / `12345678` or newly onboarded owner).
+3. The user is scoped strictly to their company:
+   - View company campaigns and workspaces
+   - Create new voice campaigns
+   - Download sample CSV cohort templates tailored to agent variables
+   - Upload contact cohorts with duplicate detection and E.164 normalization
+   - Start, pause, resume, and stop campaigns
+   - Cross-tenant requests to other companies will be rejected with `404 Not Found`
+
+---
+
+## 7. Automated Tests & Verification
+
+### 7.1 Run Full Test Suite (49/49 Passing)
 
 ```bash
 npm test
 ```
 
-Executes 40 unit and integration tests across 5 test suites:
-1. `campaign-api.test.ts`: Campaign CRUD, query filters, pagination, and config validation.
-2. `cohort-upload.test.ts`: Multipart CSV upload, header normalization, required variable checks, and sample CSV downloads.
-3. `rate-limiter.test.ts`: Atomic sliding-window rate limiter, rolling-second burst prevention, and 30-worker concurrency.
-4. `lifecycle-execution.test.ts`: Start/pause/resume/stop state machine, calling windows, duplicate webhook idempotency, short duration retry rules, and atomic parallel worker claims.
-5. `e2e-demo.test.ts`: Complete 12-step automated acceptance flow.
+Executes 49 automated tests across 6 comprehensive suites:
+1. `multi-tenant-auth.test.ts`: **10 core security tests** proving:
+   - Unauthenticated API access rejection (401)
+   - Superadmin company onboarding transactionality and idempotency
+   - Company owner campaign viewing and execution
+   - Cross-tenant read/write isolation (Org A cannot read/mutate Org B's resources)
+   - Cross-tenant workspace creation prevention
+   - Non-superadmin rejection from `/api/admin/*` (403)
+   - Inactive company dispatch and start blocking (403)
+   - Independent Redis rate-limit counters per organization
+   - Duplicate onboarding prevention
+2. `campaign-api.test.ts`: Campaign CRUD, query filters, pagination, and config validation.
+3. `cohort-upload.test.ts`: Multipart CSV upload, header normalization, required variable checks, and sample CSV downloads.
+4. `rate-limiter.test.ts`: Atomic sliding-window rate limiter, rolling-second burst prevention, and 30-worker concurrency.
+5. `lifecycle-execution.test.ts`: Start/pause/resume/stop state machine, calling windows, duplicate webhook idempotency, short duration retry rules, and atomic parallel worker claims.
+6. `e2e-demo.test.ts`: Complete 12-step automated acceptance flow.
 
 ### 5.2 Run the End-to-End Demo Script
 
@@ -230,6 +305,15 @@ A ready-to-import Postman collection is located at [`docs/campaign-manager-postm
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
+| `POST` | `/api/auth/login` | Authenticate user with scrypt password hash; issues HTTP-only session cookie. |
+| `POST` | `/api/auth/logout` | Revoke active session token and clear HTTP-only cookie. |
+| `GET` | `/api/auth/me` | Fetch authenticated user profile, organization, and role permissions. |
+| `GET` | `/api/admin/metrics` | **[Superadmin]** Live platform stats: total companies, workspaces, campaigns. |
+| `GET` | `/api/admin/companies` | **[Superadmin]** Paginated company list with user count, campaign count, RPS, status. |
+| `POST` | `/api/admin/companies` | **[Superadmin]** Transactional onboarding: Organization, Workspace, and Owner. |
+| `GET` | `/api/admin/companies/[id]` | **[Superadmin]** Company inspection with workspaces, users, and campaigns. |
+| `PATCH` | `/api/admin/companies/[id]` | **[Superadmin]** Update company RPS limit or toggle status (ACTIVE/INACTIVE). |
+| `GET` | `/api/workspaces` | List authorized workspaces scoped to the user's organization. |
 | `POST` | `/api/campaigns` | Create a campaign with validated calling window, agent, and retry configuration. |
 | `GET` | `/api/campaigns` | List campaigns with contact counts, search, status filters, and pagination. |
 | `GET` | `/api/campaigns/[id]` | Get detailed campaign configuration and paginated cohort contacts. |

@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 import { createCampaignSchema, campaignFilterSchema } from "@/lib/validations/campaign";
+import { Role } from "@prisma/client";
 import { ApiResponse, PaginatedResult } from "@/types";
+
 
 /**
  * POST /api/campaigns
- * Creates a new campaign.
+ * Creates a new campaign with strict tenant isolation and workspace verification.
  */
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const body = await req.json();
     const parseResult = createCampaignSchema.safeParse(body);
 
@@ -47,14 +54,45 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Notice: Tenant isolation and authorization middleware are pending implementation.
-    // We attach organizationId from the verified workspace.
+    // Tenant Isolation Enforcement:
+    // Non-superadmin users can ONLY create campaigns in their own organisation's workspaces
+    let targetOrgId = workspace.organizationId;
+    if (user.role !== Role.SUPERADMIN) {
+      if (!user.organizationId || workspace.organizationId !== user.organizationId) {
+        return NextResponse.json<ApiResponse>(
+          {
+            success: false,
+            error: {
+              code: "FORBIDDEN",
+              message: "You cannot create campaigns in a workspace that does not belong to your organization.",
+            },
+          },
+          { status: 403 }
+        );
+      }
+
+      if (user.organization?.status === "INACTIVE" || workspace.organization.status === "INACTIVE") {
+        return NextResponse.json<ApiResponse>(
+          {
+            success: false,
+            error: {
+              code: "ORGANIZATION_INACTIVE",
+              message: "Cannot create campaigns for an inactive organization.",
+            },
+          },
+          { status: 403 }
+        );
+      }
+
+      targetOrgId = user.organizationId;
+    }
+
     const campaign = await prisma.campaign.create({
       data: {
         name: data.name,
         description: data.description ?? null,
         workspaceId: workspace.id,
-        organizationId: workspace.organizationId,
+        organizationId: targetOrgId,
         status: data.status,
 
         sarvamAgentId: data.sarvamAgentId ?? null,
@@ -117,10 +155,14 @@ export async function POST(req: NextRequest) {
 
 /**
  * GET /api/campaigns
- * Lists campaigns with pagination, filters, and contact counts.
+ * Lists campaigns scoped to user's authorised organisation with pagination and contact counts.
  */
 export async function GET(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const { searchParams } = new URL(req.url);
     const filterResult = campaignFilterSchema.safeParse({
       page: searchParams.get("page") ?? undefined,
@@ -146,7 +188,33 @@ export async function GET(req: NextRequest) {
     const { page, limit, status, workspaceId } = filterResult.data;
     const skip = (page - 1) * limit;
 
+    // Tenant isolation filter: Non-superadmins see only their own organization's campaigns
+    let orgFilter: { organizationId?: string } = {};
+    if (user.role !== Role.SUPERADMIN) {
+      if (!user.organizationId) {
+        return NextResponse.json<ApiResponse<PaginatedResult<unknown>>>({
+          success: true,
+          data: { items: [], pagination: { page, limit, totalItems: 0, totalPages: 1 } },
+        });
+      }
+      orgFilter = { organizationId: user.organizationId };
+
+      // If workspaceId was requested, verify it belongs to user's org
+      if (workspaceId) {
+        const ws = await prisma.workspace.findFirst({
+          where: { id: workspaceId, organizationId: user.organizationId },
+        });
+        if (!ws) {
+          return NextResponse.json<ApiResponse<PaginatedResult<unknown>>>({
+            success: true,
+            data: { items: [], pagination: { page, limit, totalItems: 0, totalPages: 1 } },
+          });
+        }
+      }
+    }
+
     const where = {
+      ...orgFilter,
       ...(status ? { status } : {}),
       ...(workspaceId ? { workspaceId } : {}),
     };
@@ -202,4 +270,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-

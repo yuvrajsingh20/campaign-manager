@@ -8,6 +8,7 @@ import { GET as getCampaign, PATCH as updateCampaign } from "../src/app/api/camp
 describe("Campaign REST APIs", () => {
   let workspaceId: string;
   let createdCampaignId: string;
+  let sessionCookie: string;
 
   before(async () => {
     // Ensure default org and workspace exist
@@ -26,13 +27,36 @@ describe("Campaign REST APIs", () => {
     });
 
     workspaceId = ws.id;
+
+    // Create session for authenticated tenant user
+    const user = await prisma.user.upsert({
+      where: { email: "admin@acme.com" },
+      update: { organizationId: org.id },
+      create: {
+        email: "admin@acme.com",
+        name: "Admin User",
+        role: "OWNER",
+        organizationId: org.id,
+      },
+    });
+
+    const session = await prisma.session.create({
+      data: {
+        userId: user.id,
+        sessionToken: "test_token_campaign_api",
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    sessionCookie = `session_token=${session.sessionToken}`;
   });
 
   after(async () => {
-    // Clean up created test campaign
+    // Clean up created test campaign and session
     if (createdCampaignId) {
       await prisma.campaign.deleteMany({ where: { id: createdCampaignId } });
     }
+    await prisma.session.deleteMany({ where: { sessionToken: "test_token_campaign_api" } });
+    await prisma.$disconnect();
   });
 
   test("POST /api/campaigns: Valid campaign creation succeeds with 201", async () => {
@@ -58,7 +82,10 @@ describe("Campaign REST APIs", () => {
 
     const req = new NextRequest("http://localhost:3000/api/campaigns", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessionCookie,
+      },
       body: JSON.stringify(payload),
     });
 
@@ -88,7 +115,10 @@ describe("Campaign REST APIs", () => {
 
     const req = new NextRequest("http://localhost:3000/api/campaigns", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessionCookie,
+      },
       body: JSON.stringify(invalidPayload),
     });
 
@@ -108,7 +138,10 @@ describe("Campaign REST APIs", () => {
 
     const req = new NextRequest("http://localhost:3000/api/campaigns", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessionCookie,
+      },
       body: JSON.stringify(payload),
     });
 
@@ -121,7 +154,9 @@ describe("Campaign REST APIs", () => {
   });
 
   test("GET /api/campaigns: Lists campaigns with pagination and contact counts", async () => {
-    const req = new NextRequest("http://localhost:3000/api/campaigns?page=1&limit=10");
+    const req = new NextRequest("http://localhost:3000/api/campaigns?page=1&limit=10", {
+      headers: { Cookie: sessionCookie },
+    });
     const res = await listCampaigns(req);
     const body = await res.json();
 
@@ -136,7 +171,9 @@ describe("Campaign REST APIs", () => {
   });
 
   test("GET /api/campaigns/[id]: Returns campaign details and contact list", async () => {
-    const req = new NextRequest(`http://localhost:3000/api/campaigns/${createdCampaignId}`);
+    const req = new NextRequest(`http://localhost:3000/api/campaigns/${createdCampaignId}`, {
+      headers: { Cookie: sessionCookie },
+    });
     const res = await getCampaign(req, { params: Promise.resolve({ id: createdCampaignId }) });
     const body = await res.json();
 
@@ -156,7 +193,10 @@ describe("Campaign REST APIs", () => {
 
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${createdCampaignId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessionCookie,
+      },
       body: JSON.stringify(updatePayload),
     });
 
@@ -175,7 +215,10 @@ describe("Campaign REST APIs", () => {
   test("PATCH /api/campaigns/[id]: Returns 404 for nonexistent campaign", async () => {
     const req = new NextRequest("http://localhost:3000/api/campaigns/missing_campaign_id", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessionCookie,
+      },
       body: JSON.stringify({ name: "Updated Name" }),
     });
 
@@ -189,4 +232,3 @@ describe("Campaign REST APIs", () => {
     assert.equal(body.error.code, "NOT_FOUND");
   });
 });
-

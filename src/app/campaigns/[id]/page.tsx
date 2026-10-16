@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { UploadCohortModal } from "@/components/UploadCohortModal";
 import {
@@ -81,6 +82,7 @@ function CampaignDetailContent({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
 
   const [campaign, setCampaign] = useState<CampaignDetail | null>(null);
   const [contacts, setContacts] = useState<ContactItem[]>([]);
@@ -115,6 +117,10 @@ function CampaignDetailContent({
         });
 
         const res = await fetch(`/api/campaigns/${id}?${queryParams.toString()}`);
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
         const result = await res.json();
 
         if (!ignore && res.ok && result.success) {
@@ -138,7 +144,7 @@ function CampaignDetailContent({
     return () => {
       ignore = true;
     };
-  }, [id, page, statusFilter, search, refreshTrigger]);
+  }, [id, page, statusFilter, search, refreshTrigger, router]);
 
   // Polling effect: Polls campaign and contact stats every 5 seconds if enabled
   useEffect(() => {
@@ -735,7 +741,7 @@ export default function CampaignDetailPage(props: {
     <Suspense
       fallback={
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col font-sans">
-          <Navbar />
+          <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 sticky top-0 z-50 h-16" />
           <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-12 text-center text-sm text-zinc-500">
             Loading campaign...
           </main>

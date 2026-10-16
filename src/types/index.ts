@@ -1,4 +1,6 @@
-export type Role = "OWNER" | "ADMIN" | "MEMBER";
+export type Role = "SUPERADMIN" | "OWNER" | "ADMIN" | "MEMBER";
+
+export type OrganizationStatus = "ACTIVE" | "INACTIVE";
 
 export type CampaignStatus =
   | "DRAFT"
@@ -31,7 +33,18 @@ export interface OrganizationContext {
   id: string;
   name: string;
   slug: string;
+  status: OrganizationStatus;
   rateLimitPerMinute: number;
+  maxRequestsPerSecond: number;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: Role;
+  organizationId: string | null;
+  organization?: OrganizationContext | null;
 }
 
 export interface WorkspaceContext {

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Papa from "papaparse";
-import { Prisma } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, canAccessOrganization } from "@/lib/auth";
 import { normalizePhoneNumber } from "@/lib/validations/campaign";
 import { ApiResponse, CohortUploadSummary } from "@/types";
+
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -26,6 +28,10 @@ function normalizeHeader(header: string): string {
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const { id: campaignId } = await params;
 
     // Verify campaign exists
@@ -33,6 +39,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       where: { id: campaignId },
       include: {
         workspace: true,
+        organization: true,
       },
     });
 
@@ -46,6 +53,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           },
         },
         { status: 404 }
+      );
+    }
+
+    // Tenant Isolation Guard
+    if (!canAccessOrganization(user, campaign.organizationId)) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: `Campaign with id '${campaignId}' not found.`,
+          },
+        },
+        { status: 404 }
+      );
+    }
+
+    // Inactive Organization Check
+    if (user.role !== Role.SUPERADMIN && campaign.organization.status === "INACTIVE") {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "ORGANIZATION_INACTIVE",
+            message: "Cannot upload contacts for an inactive organization.",
+          },
+        },
+        { status: 403 }
       );
     }
 

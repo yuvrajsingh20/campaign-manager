@@ -22,6 +22,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
   let callAttemptAId: string;
   let externalCallAId: string;
   let externalCallBId: string;
+  let sessionCookie: string;
 
   before(async () => {
     // 1. Setup Organization & Workspace
@@ -38,9 +39,30 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
       create: { name: "E2E Demo Workspace", slug: "e2e-workspace", organizationId: org.id },
     });
     workspaceId = ws.id;
+
+    const user = await prisma.user.upsert({
+      where: { email: "e2e-owner@e2edemo.com" },
+      update: { organizationId: org.id },
+      create: {
+        email: "e2e-owner@e2edemo.com",
+        name: "E2E Owner",
+        role: "OWNER",
+        organizationId: org.id,
+      },
+    });
+
+    const session = await prisma.session.create({
+      data: {
+        userId: user.id,
+        sessionToken: "test_token_e2e_demo",
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    sessionCookie = `session_token=${session.sessionToken}`;
   });
 
   after(async () => {
+    await prisma.session.deleteMany({ where: { sessionToken: "test_token_e2e_demo" } });
     if (campaignId) {
       await prisma.callAttempt.deleteMany({ where: { campaignId } });
       await prisma.contact.deleteMany({ where: { campaignId } });
@@ -78,7 +100,10 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
 
     const req = new NextRequest("http://localhost:3000/api/campaigns", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: sessionCookie,
+      },
       body: JSON.stringify(payload),
     });
 
@@ -95,7 +120,9 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
   });
 
   test("Step 2: Download sample cohort CSV tailored to campaign required variables", async () => {
-    const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/contacts/sample`);
+    const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/contacts/sample`, {
+      headers: { Cookie: sessionCookie },
+    });
     const res = await getSampleCsv(req, { params: Promise.resolve({ id: campaignId }) });
     const csvContent = await res.text();
 
@@ -127,6 +154,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
       `http://localhost:3000/api/campaigns/${campaignId}/contacts/upload`,
       {
         method: "POST",
+        headers: { Cookie: sessionCookie },
         body: formData,
       }
     );
@@ -156,6 +184,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
   test("Step 5 & 6: Start campaign and observe contacts entering execution pipeline", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/start`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -265,6 +294,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
     // Pause
     const pauseReq = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/pause`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
     const pauseRes = await executeLifecycle(pauseReq, {
       params: Promise.resolve({ id: campaignId, action: "pause" }),
@@ -281,6 +311,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
     // Resume
     const resumeReq = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/resume`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
     const resumeRes = await executeLifecycle(resumeReq, {
       params: Promise.resolve({ id: campaignId, action: "resume" }),
@@ -297,6 +328,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
   test("Step 11: Stop the campaign and verify all future dispatches and retries cease", async () => {
     const stopReq = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/stop`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
     const stopRes = await executeLifecycle(stopReq, {
       params: Promise.resolve({ id: campaignId, action: "stop" }),
@@ -309,6 +341,7 @@ describe("End-to-End Acceptance Flow (Steps 1 - 12)", () => {
     // Subsequent start attempt must be rejected
     const startReq = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/start`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
     const startRes = await executeLifecycle(startReq, {
       params: Promise.resolve({ id: campaignId, action: "start" }),

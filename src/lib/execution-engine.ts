@@ -26,7 +26,7 @@ export async function processOutboundCallJob(
       where: { id: campaignId },
       include: {
         organization: {
-          select: { id: true, rateLimitPerMinute: true },
+          select: { id: true, rateLimitPerMinute: true, maxRequestsPerSecond: true, status: true },
         },
       },
     }),
@@ -41,6 +41,14 @@ export async function processOutboundCallJob(
 
   if (!contact) {
     return { status: "SKIPPED", reason: `Contact ${contactId} not found` };
+  }
+
+  // Guard: Inactive organization cannot dispatch calls
+  if (campaign.organization.status === "INACTIVE") {
+    return {
+      status: "SKIPPED",
+      reason: `Organization ${campaign.organizationId} is INACTIVE. Dispatches blocked.`,
+    };
   }
 
   // Guard: Campaign must be strictly RUNNING
@@ -92,7 +100,9 @@ export async function processOutboundCallJob(
 
   // 3. Organisation-wide rate limiting immediately prior to dispatch
   // Effective requests-per-second derived from org rate limit or campaign setting
-  const orgRps = campaign.organization.rateLimitPerMinute > 0
+  const orgRps = campaign.organization.maxRequestsPerSecond > 0
+    ? campaign.organization.maxRequestsPerSecond
+    : campaign.organization.rateLimitPerMinute > 0
     ? campaign.organization.rateLimitPerMinute / 60
     : campaign.maxRequestsPerSecond;
 

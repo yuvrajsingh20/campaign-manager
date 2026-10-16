@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { StatCard } from "@/components/StatCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -8,8 +9,11 @@ import { CampaignList, CampaignListItem } from "@/components/CampaignList";
 import { CreateCampaignModal } from "@/components/CreateCampaignModal";
 import { UploadCohortModal } from "@/components/UploadCohortModal";
 import { Megaphone, Activity, Users, PhoneCall, Plus, ShieldCheck, Zap, RefreshCw } from "lucide-react";
+import { AuthUser } from "@/types";
 
 export default function Home() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -17,11 +21,27 @@ export default function Home() {
 
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  // Authenticate user & load campaigns
   useEffect(() => {
     let ignore = false;
     async function load() {
       try {
+        const meRes = await fetch("/api/auth/me");
+        if (!meRes.ok) {
+          router.push("/login");
+          return;
+        }
+        const meData = await meRes.json();
+        if (!ignore && meData?.success && meData.data?.user) {
+          setCurrentUser(meData.data.user);
+        }
+
         const res = await fetch("/api/campaigns?page=1&limit=50");
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
+
         const result = await res.json();
         if (!ignore && result.success && result.data) {
           setCampaigns(result.data.items);
@@ -36,7 +56,7 @@ export default function Home() {
     return () => {
       ignore = true;
     };
-  }, [refreshTrigger]);
+  }, [refreshTrigger, router]);
 
   const handleRefresh = () => {
     setLoading(true);
@@ -53,6 +73,8 @@ export default function Home() {
     0
   );
 
+  const orgRps = currentUser?.organization?.maxRequestsPerSecond || 5.0;
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col font-sans">
       <Navbar />
@@ -61,9 +83,22 @@ export default function Home() {
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-zinc-200 dark:border-zinc-800">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Campaign Manager
-            </h1>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                {currentUser?.organization ? `${currentUser.organization.name} Campaigns` : "Campaign Manager"}
+              </h1>
+              {currentUser?.organization?.status && (
+                <span
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-semibold uppercase ${
+                    currentUser.organization.status === "ACTIVE"
+                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                      : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300"
+                  }`}
+                >
+                  {currentUser.organization.status}
+                </span>
+              )}
+            </div>
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
               Autonomous outbound AI voice calling campaigns with Sarvam AI integration.
             </p>
@@ -97,7 +132,9 @@ export default function Home() {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Rate Limiter</p>
-              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Org-wide Token Bucket (60 req/min)</p>
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                Org-wide Token Bucket ({orgRps} req/sec)
+              </p>
             </div>
           </div>
 
@@ -117,55 +154,48 @@ export default function Home() {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Multi-Tenancy</p>
-              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">PostgreSQL Multi-Tenant Scoped</p>
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Tenant-Isolated Workspace</p>
             </div>
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <section aria-label="Dashboard Metrics">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard
-              title="Total Campaigns"
-              value={totalCampaigns}
-              description="Configured across workspace"
-              icon={Megaphone}
-            />
-            <StatCard
-              title="Active Campaigns"
-              value={activeCampaigns}
-              description="Running or scheduled calls"
-              icon={Activity}
-            />
-            <StatCard
-              title="Total Contacts"
-              value={totalContacts}
-              description="Imported from cohorts"
-              icon={Users}
-            />
-            <StatCard
-              title="Calls Completed"
-              value={0}
-              description="Outbound call attempts logged"
-              icon={PhoneCall}
-            />
-          </div>
-        </section>
+        {/* Dashboard Stat Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+          <StatCard
+            title="Total Campaigns"
+            value={totalCampaigns}
+            icon={Megaphone}
+            description="Campaigns configured in your workspace"
+          />
+          <StatCard
+            title="Active Operations"
+            value={activeCampaigns}
+            icon={Activity}
+            description="Currently running or scheduled outreach"
+          />
+          <StatCard
+            title="Total Contacts"
+            value={totalContacts}
+            icon={Users}
+            description="Total lead cohort size in campaigns"
+          />
+        </div>
 
-        {/* Campaigns List or Empty State */}
-        <section aria-label="Campaigns List" className="space-y-4">
+        {/* Campaign List Section */}
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              Campaigns
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              Active & Configured Campaigns
             </h2>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {campaigns.length} campaigns configured
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">
+              Showing {campaigns.length} campaigns
             </span>
           </div>
 
           {loading ? (
-            <div className="p-12 text-center text-sm text-zinc-500 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
-              Loading campaigns from PostgreSQL...
+            <div className="w-full py-16 flex flex-col items-center justify-center space-y-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
+              <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+              <p className="text-sm text-zinc-500">Loading campaign configurations...</p>
             </div>
           ) : campaigns.length === 0 ? (
             <EmptyState onCreateCampaign={() => setIsCreateOpen(true)} />
@@ -175,31 +205,32 @@ export default function Home() {
               onUploadCohort={(campaign) => setSelectedCohortCampaign(campaign)}
             />
           )}
-        </section>
+        </div>
       </main>
 
-      {/* Modals */}
+      {/* Creation Modal */}
       <CreateCampaignModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
-        onCreated={handleRefresh}
+        onCreated={() => {
+          handleRefresh();
+          setIsCreateOpen(false);
+        }}
       />
 
+      {/* Cohort Upload Modal */}
       {selectedCohortCampaign && (
         <UploadCohortModal
           isOpen={!!selectedCohortCampaign}
           campaignId={selectedCohortCampaign.id}
           campaignName={selectedCohortCampaign.name}
-          requiredVariables={selectedCohortCampaign.requiredVariables}
+          requiredVariables={selectedCohortCampaign.requiredVariables || []}
           onClose={() => setSelectedCohortCampaign(null)}
-          onSuccess={handleRefresh}
+          onSuccess={() => {
+            handleRefresh();
+          }}
         />
       )}
-
-      {/* Footer */}
-      <footer className="border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 py-4 text-center text-xs text-zinc-500 dark:text-zinc-400">
-        Campaign Manager &bull; Sarvam AI Voice Outbound Platform
-      </footer>
     </div>
   );
 }

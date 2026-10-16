@@ -14,6 +14,8 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   let emptyCampaignId: string;
   let testContactId: string;
 
+  let sessionCookie: string;
+
   before(async () => {
     const org = await prisma.organization.upsert({
       where: { slug: "acme-corp" },
@@ -26,6 +28,26 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
       update: {},
       create: { name: "Default Workspace", slug: "default", organizationId: org.id },
     });
+
+    const user = await prisma.user.upsert({
+      where: { email: "admin@acme.com" },
+      update: { organizationId: org.id },
+      create: {
+        email: "admin@acme.com",
+        name: "Admin User",
+        role: "OWNER",
+        organizationId: org.id,
+      },
+    });
+
+    const session = await prisma.session.create({
+      data: {
+        userId: user.id,
+        sessionToken: "test_token_lifecycle",
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+    sessionCookie = `session_token=${session.sessionToken}`;
 
     // Campaign with contacts
     const campaign = await prisma.campaign.create({
@@ -73,6 +95,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   });
 
   after(async () => {
+    await prisma.session.deleteMany({ where: { sessionToken: "test_token_lifecycle" } });
     await prisma.callAttempt.deleteMany({ where: { campaignId } });
     await prisma.contact.deleteMany({ where: { campaignId } });
     await prisma.campaign.deleteMany({ where: { id: { in: [campaignId, emptyCampaignId] } } });
@@ -84,6 +107,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   test("Cannot start campaign with 0 contacts (400 NO_CONTACTS)", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${emptyCampaignId}/start`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -99,6 +123,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   test("Valid start transitions campaign from DRAFT to RUNNING", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/start`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -118,6 +143,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   test("Start is idempotent if campaign is already RUNNING", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/start`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -132,6 +158,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   test("Pause transitions RUNNING campaign to PAUSED and stops dispatches", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/pause`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -158,6 +185,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   test("Resume transitions PAUSED campaign back to RUNNING", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/resume`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -450,6 +478,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
   test("Stop transitions campaign to CANCELLED and halts all retries", async () => {
     const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/stop`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
 
     const res = await executeLifecycle(req, {
@@ -463,6 +492,7 @@ describe("Campaign Lifecycle, Execution Engine, and Webhook Retries", () => {
     // Attempting to start stopped campaign must be rejected
     const startReq = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}/start`, {
       method: "POST",
+      headers: { Cookie: sessionCookie },
     });
     const startRes = await executeLifecycle(startReq, {
       params: Promise.resolve({ id: campaignId, action: "start" }),

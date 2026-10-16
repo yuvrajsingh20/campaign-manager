@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import Papa from "papaparse";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, canAccessOrganization } from "@/lib/auth";
 import { ApiResponse } from "@/types";
+
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -13,6 +15,10 @@ interface RouteParams {
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await requireAuth(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { user } = auth;
+
     const { id: campaignId } = await params;
 
     const campaign = await prisma.campaign.findUnique({
@@ -20,11 +26,26 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       select: {
         id: true,
         name: true,
+        organizationId: true,
         requiredVariables: true,
       },
     });
 
     if (!campaign) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: `Campaign with id '${campaignId}' not found.`,
+          },
+        },
+        { status: 404 }
+      );
+    }
+
+    // Tenant Isolation Guard
+    if (!canAccessOrganization(user, campaign.organizationId)) {
       return NextResponse.json<ApiResponse>(
         {
           success: false,
