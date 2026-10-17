@@ -11,6 +11,13 @@ import {
 } from "lucide-react";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
+import {
+  formatRequestsPerSecond,
+  REQUESTS_PER_SECOND_MIN,
+  REQUESTS_PER_SECOND_STEP,
+  resolveOrganizationRequestsPerSecond,
+  validateCampaignRequestsPerSecond,
+} from "@/lib/validations/rate-limit";
 
 interface CampaignData {
   id: string;
@@ -23,6 +30,10 @@ interface CampaignData {
   connectionId?: string | null;
   callerPhoneNumber?: string | null;
   maxRequestsPerSecond: number;
+  organization?: {
+    maxRequestsPerSecond?: number | null;
+    rateLimitPerMinute?: number | null;
+  } | null;
   dailyStartTime?: string | null;
   dailyEndTime?: string | null;
   timezone: string;
@@ -93,7 +104,10 @@ function EditCampaignModalContent({
     campaign.scheduledEndTime ? campaign.scheduledEndTime.slice(0, 16) : ""
   );
 
-  const [maxRequestsPerSecond, setMaxRequestsPerSecond] = useState(campaign.maxRequestsPerSecond || 5.0);
+  const orgLimit = resolveOrganizationRequestsPerSecond(campaign.organization);
+  const [rateLimitInput, setRateLimitInput] = useState(
+    formatRequestsPerSecond(campaign.maxRequestsPerSecond || orgLimit)
+  );
   const [maxRetries, setMaxRetries] = useState(campaign.maxRetries ?? 3);
   const [retryIntervalMinutes, setRetryIntervalMinutes] = useState(campaign.retryIntervalMinutes ?? 30);
   const [retryOnBusy, setRetryOnBusy] = useState(campaign.retryOnBusy ?? true);
@@ -123,6 +137,13 @@ function EditCampaignModalContent({
       return;
     }
 
+    const rateCheck = validateCampaignRequestsPerSecond(rateLimitInput, orgLimit);
+    if (!rateCheck.ok) {
+      setErrorMessage(rateCheck.message);
+      setActiveTab("retries");
+      return;
+    }
+
     setSubmitting(true);
     setErrorMessage(null);
 
@@ -139,7 +160,7 @@ function EditCampaignModalContent({
       sarvamAgentId: sarvamAgentId.trim() || null,
       connectionId: connectionId.trim() || null,
       callerPhoneNumber: callerPhoneNumber.trim() || null,
-      maxRequestsPerSecond: Number(maxRequestsPerSecond) || 5.0,
+      maxRequestsPerSecond: rateCheck.value,
       dailyStartTime,
       dailyEndTime,
       timezone: timezone.trim() || "UTC",
@@ -477,19 +498,39 @@ function EditCampaignModalContent({
         {activeTab === "retries" && (
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                Rate limit ceiling (requests/sec)
-              </label>
+              <div className="flex items-center justify-between mb-1.5 gap-3">
+                <label htmlFor="campaign-rate-limit" className="block text-xs font-medium text-slate-700">
+                  Rate limit ceiling (requests/sec)
+                </label>
+                <span className="text-[11px] text-slate-500">
+                  Organisation limit: <strong>{formatRequestsPerSecond(orgLimit)} req/sec</strong>
+                </span>
+              </div>
               <input
+                id="campaign-rate-limit"
                 type="number"
-                step="0.5"
-                min="0.1"
-                max="50"
+                inputMode="decimal"
+                step={REQUESTS_PER_SECOND_STEP}
+                min={REQUESTS_PER_SECOND_MIN}
+                max={orgLimit}
                 required
-                value={maxRequestsPerSecond}
-                onChange={(e) => setMaxRequestsPerSecond(parseFloat(e.target.value) || 1)}
+                value={rateLimitInput}
+                onChange={(e) => setRateLimitInput(e.target.value)}
+                onInvalid={(e) => {
+                  e.preventDefault();
+                  const check = validateCampaignRequestsPerSecond(rateLimitInput, orgLimit);
+                  setErrorMessage(
+                    check.ok
+                      ? `Rate limit must be between ${REQUESTS_PER_SECOND_MIN} and ${formatRequestsPerSecond(orgLimit)} requests/sec.`
+                      : check.message
+                  );
+                  setActiveTab("retries");
+                }}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-900"
               />
+              <p className="text-[11px] text-slate-500 mt-1">
+                Use increments of 0.1. This campaign cannot exceed the shared organisation ceiling.
+              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">

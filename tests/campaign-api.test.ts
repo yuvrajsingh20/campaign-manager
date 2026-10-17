@@ -108,7 +108,7 @@ describe("Campaign REST APIs", () => {
       sarvamAgentId: "sarvam_app_0987",
       connectionId: "conn_telephony_telnyx_01",
       callerPhoneNumber: "+14155552671",
-      maxRequestsPerSecond: 10,
+      maxRequestsPerSecond: 2,
       dailyStartTime: "10:00",
       dailyEndTime: "17:00",
       timezone: "America/New_York",
@@ -136,6 +136,7 @@ describe("Campaign REST APIs", () => {
     assert.equal(body.data.name, payload.name);
     assert.equal(body.data.status, "DRAFT"); // Must default to non-running status
     assert.equal(body.data.maxRetries, 4);
+    assert.equal(body.data.maxRequestsPerSecond, 2);
     assert.equal(body.data.timezone, "America/New_York");
     assert.deepEqual(body.data.requiredVariables, ["subscriber_plan", "renewal_amount"]);
 

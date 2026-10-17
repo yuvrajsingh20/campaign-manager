@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, canAccessOrganization, requireCampaignOperator } from "@/lib/auth";
-import { updateCampaignSchema, contactFilterSchema } from "@/lib/validations/campaign";
+import { updateCampaignSchema, contactFilterSchema, campaignValidationMessage } from "@/lib/validations/campaign";
+import {
+  resolveOrganizationRequestsPerSecond,
+  validateCampaignRequestsPerSecond,
+} from "@/lib/validations/rate-limit";
 import { Role, ContactStatus } from "@prisma/client";
 import { ApiResponse, PaginatedResult } from "@/types";
 
@@ -52,6 +56,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       include: {
         workspace: {
           select: { id: true, name: true, slug: true },
+        },
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            maxRequestsPerSecond: true,
+            rateLimitPerMinute: true,
+          },
         },
         _count: {
           select: {
@@ -245,7 +257,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           success: false,
           error: {
             code: "VALIDATION_ERROR",
-            message: "Invalid update parameters",
+            message: campaignValidationMessage(parseResult.error, "Invalid update parameters"),
             details: parseResult.error.flatten(),
           },
         },
@@ -315,6 +327,25 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     const data = parseResult.data;
 
+    let maxRequestsPerSecond = data.maxRequestsPerSecond;
+    if (data.maxRequestsPerSecond !== undefined) {
+      const orgLimit = resolveOrganizationRequestsPerSecond(existing.organization);
+      const rateCheck = validateCampaignRequestsPerSecond(data.maxRequestsPerSecond, orgLimit);
+      if (!rateCheck.ok) {
+        return NextResponse.json<ApiResponse>(
+          {
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: rateCheck.message,
+            },
+          },
+          { status: 400 }
+        );
+      }
+      maxRequestsPerSecond = rateCheck.value;
+    }
+
     const updated = await prisma.campaign.update({
       where: { id },
       data: {
@@ -330,8 +361,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         ...(data.callerPhoneNumber !== undefined
           ? { callerPhoneNumber: data.callerPhoneNumber || null }
           : {}),
-        ...(data.maxRequestsPerSecond !== undefined
-          ? { maxRequestsPerSecond: data.maxRequestsPerSecond }
+        ...(maxRequestsPerSecond !== undefined
+          ? { maxRequestsPerSecond }
           : {}),
         ...(data.scheduledStartTime !== undefined
           ? {

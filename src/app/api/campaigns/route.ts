@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireCampaignOperator } from "@/lib/auth";
-import { createCampaignSchema, campaignFilterSchema } from "@/lib/validations/campaign";
+import { createCampaignSchema, campaignFilterSchema, campaignValidationMessage } from "@/lib/validations/campaign";
+import {
+  resolveOrganizationRequestsPerSecond,
+  validateCampaignRequestsPerSecond,
+} from "@/lib/validations/rate-limit";
 import { Role } from "@prisma/client";
 import { ApiResponse, PaginatedResult } from "@/types";
 
@@ -27,7 +31,7 @@ export async function POST(req: NextRequest) {
           success: false,
           error: {
             code: "VALIDATION_ERROR",
-            message: "Invalid campaign parameters",
+            message: campaignValidationMessage(parseResult.error, "Invalid campaign parameters"),
             details: parseResult.error.flatten(),
           },
         },
@@ -89,6 +93,21 @@ export async function POST(req: NextRequest) {
       targetOrgId = user.organizationId;
     }
 
+    const orgLimit = resolveOrganizationRequestsPerSecond(workspace.organization);
+    const rateCheck = validateCampaignRequestsPerSecond(data.maxRequestsPerSecond, orgLimit);
+    if (!rateCheck.ok) {
+      return NextResponse.json<ApiResponse>(
+        {
+          success: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: rateCheck.message,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
     const campaign = await prisma.campaign.create({
       data: {
         name: data.name,
@@ -106,7 +125,7 @@ export async function POST(req: NextRequest) {
 
         connectionId: data.connectionId ?? null,
         callerPhoneNumber: data.callerPhoneNumber || null,
-        maxRequestsPerSecond: data.maxRequestsPerSecond,
+        maxRequestsPerSecond: rateCheck.value,
 
         scheduledStartTime: data.scheduledStartTime ? new Date(data.scheduledStartTime) : null,
         scheduledEndTime: data.scheduledEndTime ? new Date(data.scheduledEndTime) : null,

@@ -156,7 +156,7 @@ describe("Regression Fixes & Reliability Verification", () => {
   test("3. PATCH /api/campaigns/[id] updates configuration fields safely", async () => {
     const updatePayload = {
       name: "Updated Campaign Title",
-      maxRequestsPerSecond: 8.0,
+      maxRequestsPerSecond: 2.1,
       dailyStartTime: "10:00",
       dailyEndTime: "20:00",
       retryIntervalMinutes: 45,
@@ -179,12 +179,71 @@ describe("Regression Fixes & Reliability Verification", () => {
     assert.equal(res.status, 200);
     assert.equal(data.success, true);
     assert.equal(data.data.name, "Updated Campaign Title");
-    assert.equal(data.data.maxRequestsPerSecond, 8.0);
+    assert.equal(data.data.maxRequestsPerSecond, 2.1);
     assert.equal(data.data.dailyStartTime, "10:00");
     assert.equal(data.data.dailyEndTime, "20:00");
     assert.equal(data.data.retryIntervalMinutes, 45);
     assert.equal(data.data.maxRetries, 4);
     assert.equal(data.data.callerPhoneNumber, "+919876543211");
+  });
+
+  test("Rate limit values 1, 2, 2.1, and 5 can be saved within the organisation ceiling", async () => {
+    for (const value of [1, 2, 2.1, 5]) {
+      const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: sessionCookie,
+        },
+        body: JSON.stringify({ maxRequestsPerSecond: value }),
+      });
+
+      const res = await updateCampaign(req, { params: Promise.resolve({ id: campaignId }) });
+      const data = await res.json();
+
+      assert.equal(res.status, 200, `expected 2xx when saving ${value} req/sec`);
+      assert.equal(data.success, true);
+      assert.equal(data.data.maxRequestsPerSecond, value);
+    }
+  });
+
+  test("Rate limit rejects invalid values and values above the organisation ceiling", async () => {
+    const invalidValues = [0, -1, 0.05, 2.15];
+    for (const value of invalidValues) {
+      const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: sessionCookie,
+        },
+        body: JSON.stringify({ maxRequestsPerSecond: value }),
+      });
+      const res = await updateCampaign(req, { params: Promise.resolve({ id: campaignId }) });
+      const data = await res.json();
+      assert.equal(res.status, 400, `expected 400 for invalid rate ${value}`);
+      assert.equal(data.success, false);
+      assert.equal(data.error.code, "VALIDATION_ERROR");
+    }
+
+    for (const value of [5.1, 8, 50]) {
+      const req = new NextRequest(`http://localhost:3000/api/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: sessionCookie,
+        },
+        body: JSON.stringify({ maxRequestsPerSecond: value }),
+      });
+      const res = await updateCampaign(req, { params: Promise.resolve({ id: campaignId }) });
+      const data = await res.json();
+      assert.equal(res.status, 400, `expected 400 when ${value} exceeds the organisation ceiling`);
+      assert.equal(data.success, false);
+      assert.equal(data.error.code, "VALIDATION_ERROR");
+      assert.match(data.error.message, /organisation limit/i);
+    }
+
+    const stored = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    assert.equal(stored?.maxRequestsPerSecond, 5, "Rejected updates must leave the saved rate unchanged");
   });
 
   // Test 4: Webhook security in production mode

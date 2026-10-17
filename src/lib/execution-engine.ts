@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { OrgRateLimiter } from "./rate-limiter";
+import { resolveOrganizationRequestsPerSecond } from "./validations/rate-limit";
 import { isCallingWindowOpen } from "./scheduler";
 import { sarvamClient, SarvamApiError, SarvamClient } from "./sarvam";
 import { OutboundCallJobData, enqueueContactRetry } from "./queue";
@@ -90,18 +91,16 @@ export async function processOutboundCallJob(
     };
   }
 
-  // 3. Organisation-wide rate limiting immediately prior to dispatch
-  // Effective requests-per-second derived from org rate limit or campaign setting
-  const orgRps = campaign.organization.maxRequestsPerSecond > 0
-    ? campaign.organization.maxRequestsPerSecond
-    : campaign.organization.rateLimitPerMinute > 0
-    ? campaign.organization.rateLimitPerMinute / 60
-    : campaign.maxRequestsPerSecond;
-
-  const rateCheck = await OrgRateLimiter.acquire(
-    campaign.organizationId,
-    Math.min(orgRps, campaign.maxRequestsPerSecond)
-  );
+  // 3. Organisation-wide rate limiting immediately prior to dispatch.
+  // The shared Redis key always uses the superadmin organisation ceiling.
+  // The campaign setting is a separate, lower-or-equal cap and cannot raise that ceiling.
+  const orgRps = resolveOrganizationRequestsPerSecond(campaign.organization);
+  const rateCheck = await OrgRateLimiter.reserveDispatch({
+    organizationId: campaign.organizationId,
+    organizationRps: orgRps,
+    campaignId: campaign.id,
+    campaignRps: campaign.maxRequestsPerSecond,
+  });
 
   if (!rateCheck.allowed) {
     const delay = Math.max(500, rateCheck.retryAfterMs);

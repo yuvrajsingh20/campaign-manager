@@ -66,6 +66,12 @@ interface CampaignDetail {
   connectionId?: string | null;
   callerPhoneNumber?: string | null;
   maxRequestsPerSecond: number;
+  organization?: {
+    id: string;
+    name: string;
+    maxRequestsPerSecond: number;
+    rateLimitPerMinute: number;
+  };
   concurrencyLimit: number;
   maxRetries: number;
   retryIntervalMinutes: number;

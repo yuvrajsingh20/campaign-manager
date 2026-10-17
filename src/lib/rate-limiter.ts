@@ -23,6 +23,44 @@ export interface RateLimitResult {
  *
  * Returns an array: [allowed (1 or 0), retryAfterMs (integer), remainingSlots (integer)]
  */
+/**
+ * Translates a requests-per-second setting into the integer window used by the sliding log.
+ * Burst capacity, when provided, is the explicit window size used by existing callers.
+ */
+export function resolveEffectiveWindow(
+  requestsPerSecond: number,
+  burstCapacity?: number,
+  windowMs: number = 1000
+): { effectiveLimit: number; effectiveWindowMs: number } | null {
+  if (!(requestsPerSecond > 0)) return null;
+
+  if (burstCapacity !== undefined && burstCapacity > 0) {
+    return {
+      effectiveLimit: Math.max(1, Math.round(burstCapacity)),
+      effectiveWindowMs: windowMs,
+    };
+  }
+
+  if (requestsPerSecond < 1) {
+    return {
+      effectiveLimit: 1,
+      effectiveWindowMs: Math.max(100, Math.round(1000 / requestsPerSecond)),
+    };
+  }
+
+  if (requestsPerSecond % 1 !== 0 && windowMs === 1000) {
+    return {
+      effectiveLimit: Math.round(requestsPerSecond * 2),
+      effectiveWindowMs: 2000,
+    };
+  }
+
+  return {
+    effectiveLimit: Math.max(1, Math.round(requestsPerSecond * (windowMs / 1000))),
+    effectiveWindowMs: windowMs,
+  };
+}
+
 const SLIDING_WINDOW_LUA = `
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
@@ -55,6 +93,73 @@ else
 end
 `;
 
+/**
+ * Admits one request only when BOTH the campaign window and the shared organisation
+ * window have capacity. Neither key is written unless both checks pass, so a campaign
+ * rate cannot raise or replace the organisation ceiling.
+ *
+ * KEYS[1]: ratelimit:org:{organizationId}
+ * KEYS[2]: ratelimit:campaign:{campaignId}
+ * ARGV[1]: now
+ * ARGV[2]: organisation limit
+ * ARGV[3]: organisation window ms
+ * ARGV[4]: campaign limit (already capped at the organisation limit)
+ * ARGV[5]: campaign window ms
+ * ARGV[6]: member id
+ */
+const ORG_AND_CAMPAIGN_WINDOW_LUA = `
+local orgKey = KEYS[1]
+local campaignKey = KEYS[2]
+local now = tonumber(ARGV[1])
+local orgLimit = tonumber(ARGV[2])
+local orgWindowMs = tonumber(ARGV[3])
+local campaignLimit = tonumber(ARGV[4])
+local campaignWindowMs = tonumber(ARGV[5])
+local memberId = ARGV[6]
+
+local function inspect(key, limit, windowMs)
+  local clearBefore = now - windowMs
+  redis.call("ZREMRANGEBYSCORE", key, "-inf", clearBefore)
+  local currentCount = redis.call("ZCARD", key)
+  if currentCount < limit then
+    return { 1, 0, limit - currentCount - 1 }
+  end
+  local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
+  local waitMs = 100
+  if oldest and oldest[2] then
+    local oldestScore = tonumber(oldest[2])
+    waitMs = math.max(1, math.ceil((oldestScore + windowMs) - now))
+  end
+  redis.call("PEXPIRE", key, math.ceil(windowMs * 2))
+  return { 0, waitMs, 0 }
+end
+
+local campaign = inspect(campaignKey, campaignLimit, campaignWindowMs)
+if campaign[1] == 0 then
+  return campaign
+end
+
+local org = inspect(orgKey, orgLimit, orgWindowMs)
+if org[1] == 0 then
+  return org
+end
+
+redis.call("ZADD", campaignKey, now, memberId)
+redis.call("PEXPIRE", campaignKey, math.ceil(campaignWindowMs * 2))
+redis.call("ZADD", orgKey, now, memberId)
+redis.call("PEXPIRE", orgKey, math.ceil(orgWindowMs * 2))
+return org
+`;
+
+function deniedRateLimit(retryAfterMs = 1000): RateLimitResult {
+  return {
+    allowed: false,
+    retryAfterMs,
+    remainingSlots: 0,
+    remainingTokens: 0,
+  };
+}
+
 export class OrgRateLimiter {
   /**
    * Attempts to consume one request slot for an organization under an atomic sliding window log.
@@ -70,33 +175,12 @@ export class OrgRateLimiter {
     burstCapacity?: number,
     windowMs: number = 1000
   ): Promise<RateLimitResult> {
-    if (requestsPerSecond <= 0) {
-      return {
-        allowed: false,
-        retryAfterMs: 1000,
-        remainingSlots: 0,
-        remainingTokens: 0,
-      };
+    const resolved = resolveEffectiveWindow(requestsPerSecond, burstCapacity, windowMs);
+    if (!resolved) {
+      return deniedRateLimit();
     }
 
-    let effectiveLimit: number;
-    let effectiveWindowMs: number;
-
-    if (burstCapacity !== undefined && burstCapacity > 0) {
-      effectiveLimit = Math.max(1, Math.round(burstCapacity));
-      effectiveWindowMs = windowMs;
-    } else if (requestsPerSecond < 1) {
-      // Sub-1 RPS: e.g. 0.5 req/sec -> 1 request per 2000ms window without rounding up to 1 RPS
-      effectiveLimit = 1;
-      effectiveWindowMs = Math.max(100, Math.round(1000 / requestsPerSecond));
-    } else if (requestsPerSecond % 1 !== 0 && windowMs === 1000) {
-      // Decimal RPS: e.g. 8.5 req/sec -> 17 requests per 2000ms window
-      effectiveLimit = Math.round(requestsPerSecond * 2);
-      effectiveWindowMs = 2000;
-    } else {
-      effectiveLimit = Math.max(1, Math.round(requestsPerSecond * (windowMs / 1000)));
-      effectiveWindowMs = windowMs;
-    }
+    const { effectiveLimit, effectiveWindowMs } = resolved;
 
     const key = `ratelimit:org:${organizationId}`;
     const now = Date.now();
@@ -129,12 +213,69 @@ export class OrgRateLimiter {
         error
       );
       // Security & Safety: Fail-closed so workers cannot flood downstream telephony provider when Redis fails
+      return deniedRateLimit();
+    }
+  }
+
+  /**
+   * Reserves one dispatch slot for a campaign without letting that campaign's rate
+   * replace the shared organisation limiter.
+   *
+   * The organisation key is always evaluated at the superadmin ceiling. The campaign
+   * key is evaluated at min(campaignRps, organisationRps), so a campaign can be slower
+   * than the organisation but cannot raise the shared ceiling for other campaigns or workers.
+   */
+  public static async reserveDispatch(input: {
+    organizationId: string;
+    organizationRps: number;
+    campaignId: string;
+    campaignRps: number;
+  }): Promise<RateLimitResult> {
+    const { organizationId, organizationRps, campaignId, campaignRps } = input;
+
+    if (!(organizationRps > 0) || !(campaignRps > 0)) {
+      return deniedRateLimit();
+    }
+
+    const cappedCampaignRps = Math.min(campaignRps, organizationRps);
+    const orgWindow = resolveEffectiveWindow(organizationRps);
+    const campaignWindow = resolveEffectiveWindow(cappedCampaignRps);
+    if (!orgWindow || !campaignWindow) {
+      return deniedRateLimit();
+    }
+
+    const orgKey = `ratelimit:org:${organizationId}`;
+    const campaignKey = `ratelimit:campaign:${campaignId}`;
+    const now = Date.now();
+    const memberId = `${now}_${randomUUID().substring(0, 8)}`;
+
+    try {
+      const res = (await redis.eval(
+        ORG_AND_CAMPAIGN_WINDOW_LUA,
+        2,
+        orgKey,
+        campaignKey,
+        now.toString(),
+        orgWindow.effectiveLimit.toString(),
+        orgWindow.effectiveWindowMs.toString(),
+        campaignWindow.effectiveLimit.toString(),
+        campaignWindow.effectiveWindowMs.toString(),
+        memberId
+      )) as [number, number, number];
+
+      const allowed = res[0] === 1;
       return {
-        allowed: false,
-        retryAfterMs: 1000,
-        remainingSlots: 0,
-        remainingTokens: 0,
+        allowed,
+        retryAfterMs: res[1],
+        remainingSlots: res[2],
+        remainingTokens: res[2],
       };
+    } catch (error) {
+      console.error(
+        `[OrgRateLimiter] Redis error reserving dispatch slot for org ${organizationId}:`,
+        error
+      );
+      return deniedRateLimit();
     }
   }
 

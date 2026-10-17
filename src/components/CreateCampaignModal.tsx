@@ -15,6 +15,13 @@ import {
 } from "lucide-react";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
+import {
+  formatRequestsPerSecond,
+  REQUESTS_PER_SECOND_MIN,
+  REQUESTS_PER_SECOND_STEP,
+  resolveOrganizationRequestsPerSecond,
+  validateCampaignRequestsPerSecond,
+} from "@/lib/validations/rate-limit";
 
 interface WorkspaceOption {
   id: string;
@@ -90,7 +97,7 @@ export function CreateCampaignModal({
   const [scheduledEndTime, setScheduledEndTime] = useState("");
 
   // Step 4: Rate limit & Retries
-  const [maxRequestsPerSecond, setMaxRequestsPerSecond] = useState(5.0);
+  const [maxRequestsPerSecond, setMaxRequestsPerSecond] = useState("5");
   const [maxRetries, setMaxRetries] = useState(3);
   const [retryIntervalMinutes, setRetryIntervalMinutes] = useState(30);
   const [retryOnBusy, setRetryOnBusy] = useState(true);
@@ -131,10 +138,10 @@ export function CreateCampaignModal({
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const selectedWorkspace = workspaces.find((w) => w.id === workspaceId);
-  const orgLimit = selectedWorkspace?.organization?.maxRequestsPerSecond ?? 5.0;
+  const orgLimit = resolveOrganizationRequestsPerSecond(selectedWorkspace?.organization);
+
+  if (!isOpen) return null;
 
   const toggleDay = (day: string) => {
     setAllowedDays((prev) =>
@@ -158,6 +165,12 @@ export function CreateCampaignModal({
         setErrorMessage("Please select at least one allowed calling day.");
         return false;
       }
+    } else if (currentStep === 4) {
+      const rateCheck = validateCampaignRequestsPerSecond(maxRequestsPerSecond, orgLimit);
+      if (!rateCheck.ok) {
+        setErrorMessage(rateCheck.message);
+        return false;
+      }
     }
     return true;
   };
@@ -177,6 +190,13 @@ export function CreateCampaignModal({
     if (e) e.preventDefault();
     if (!validateCurrentStep()) return;
 
+    const rateCheck = validateCampaignRequestsPerSecond(maxRequestsPerSecond, orgLimit);
+    if (!rateCheck.ok) {
+      setErrorMessage(rateCheck.message);
+      setCurrentStep(4);
+      return;
+    }
+
     setSubmitting(true);
     setErrorMessage(null);
 
@@ -195,7 +215,7 @@ export function CreateCampaignModal({
       sarvamAgentId: sarvamAgentId.trim() || undefined,
       connectionId: connectionId.trim() || undefined,
       callerPhoneNumber: callerPhoneNumber.trim() || undefined,
-      maxRequestsPerSecond: Number(maxRequestsPerSecond) || 5.0,
+      maxRequestsPerSecond: rateCheck.value,
 
       dailyStartTime,
       dailyEndTime,
@@ -575,21 +595,23 @@ export function CreateCampaignModal({
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-medium text-slate-700">
+                <label htmlFor="create-campaign-rate-limit" className="block text-xs font-medium text-slate-700">
                   Rate limit ceiling (requests/sec)
                 </label>
                 <span className="text-[11px] text-slate-500">
-                  Organisation limit: <strong>{orgLimit} req/sec</strong>
+                  Organisation limit: <strong>{formatRequestsPerSecond(orgLimit)} req/sec</strong>
                 </span>
               </div>
               <input
+                id="create-campaign-rate-limit"
                 type="number"
-                step="0.5"
-                min="0.5"
+                inputMode="decimal"
+                step={REQUESTS_PER_SECOND_STEP}
+                min={REQUESTS_PER_SECOND_MIN}
                 max={orgLimit}
                 required
                 value={maxRequestsPerSecond}
-                onChange={(e) => setMaxRequestsPerSecond(parseFloat(e.target.value))}
+                onChange={(e) => setMaxRequestsPerSecond(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors"
               />
               <p className="text-[11px] text-slate-500 mt-1">
