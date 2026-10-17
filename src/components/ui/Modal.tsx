@@ -44,23 +44,26 @@ export function Modal({
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop */}
+      {/* Backdrop sits behind the dialog. It must not paint over the panel,
+          or backdrop-filter blurs the form itself. */}
       <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs"
         onClick={onClose}
         aria-hidden="true"
       />
 
-      {/* Modal Dialog */}
-      <div className="min-h-full flex items-center justify-center p-4 text-center sm:p-6">
+      <div className="relative z-10 min-h-full flex items-center justify-center p-4 text-center sm:p-6">
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
           className={`w-full ${maxWidthStyles[maxWidth]} transform overflow-hidden rounded-xl bg-white text-left align-middle shadow-xl border border-slate-200 transition-all max-h-[90vh] flex flex-col`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="px-6 py-4.5 border-b border-slate-200/80 flex items-start justify-between gap-4 shrink-0 bg-slate-50/50">
             <div>
-              <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+              <h3 id="modal-title" className="text-base font-semibold text-slate-900">{title}</h3>
               {description && (
                 <p className="text-xs text-slate-500 mt-0.5">{description}</p>
               )}

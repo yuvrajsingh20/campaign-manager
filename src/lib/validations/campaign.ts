@@ -1,7 +1,26 @@
 import { z } from "zod";
+import {
+  isRequestsPerSecondStepAligned,
+  REQUESTS_PER_SECOND_ABSOLUTE_MAX,
+  REQUESTS_PER_SECOND_MIN,
+} from "./rate-limit";
 
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const PHONE_REGEX = /^\+?[1-9]\d{7,14}$/;
+
+export const requestsPerSecondSchema = z
+  .number()
+  .min(REQUESTS_PER_SECOND_MIN, "Rate limit must be at least 0.1 requests/sec")
+  .max(REQUESTS_PER_SECOND_ABSOLUTE_MAX, "Rate limit cannot exceed 100 requests/sec")
+  .refine(isRequestsPerSecondStepAligned, "Rate limit must use increments of 0.1 requests/sec");
+
+export function campaignValidationMessage(
+  error: { issues: { path: PropertyKey[]; message: string }[] },
+  fallback: string
+): string {
+  const rateIssue = error.issues.find((issue) => issue.path[0] === "maxRequestsPerSecond");
+  return rateIssue?.message || fallback;
+}
 
 export const ALLOWED_DAYS_ENUM = [
   "MONDAY",
@@ -35,7 +54,7 @@ export const createCampaignSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  maxRequestsPerSecond: z.number().min(0.1).max(100.0).default(5.0),
+  maxRequestsPerSecond: requestsPerSecondSchema.default(5.0),
 
   // Scheduling and allowed calling windows
   scheduledStartTime: z.string().datetime().optional().nullable(),
@@ -91,7 +110,7 @@ export const updateCampaignSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  maxRequestsPerSecond: z.number().min(0.1).max(100.0).optional(),
+  maxRequestsPerSecond: requestsPerSecondSchema.optional(),
 
   scheduledStartTime: z.string().datetime().optional().nullable(),
   scheduledEndTime: z.string().datetime().optional().nullable(),

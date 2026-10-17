@@ -212,10 +212,10 @@ export function DashboardLayout({
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity"
+            className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <div className="fixed inset-y-0 left-0 w-72 max-w-[80vw] bg-white shadow-xl z-50">
+          <div className="relative z-10 h-full w-72 max-w-[80vw] bg-white shadow-xl">
             <div className="absolute top-4 right-4 z-10">
               <button
                 type="button"
