@@ -38,6 +38,63 @@ export class SarvamApiError extends Error {
   }
 }
 
+/**
+ * Returns true when a Sarvam path ID env value is missing or still a template placeholder.
+ * Internal Prisma CUIDs must never be treated as valid Sarvam org/workspace IDs.
+ */
+function isUnsetSarvamPathId(value: string | undefined, placeholder: string): boolean {
+  if (!value) return true;
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    trimmed === placeholder ||
+    lower.includes("placeholder") ||
+    lower.includes("example") ||
+    lower.startsWith("mock_") ||
+    lower.startsWith("your-")
+  );
+}
+
+/**
+ * Resolves the Sarvam org/workspace IDs used in the outbound API path.
+ *
+ * These are external provider IDs from `SARVAM_ORG_ID` / `SARVAM_WORKSPACE_ID`,
+ * not Prisma `Organization.id` / `Workspace.id` CUIDs. Live mode never falls
+ * back to internal tenant IDs or mock placeholders.
+ */
+export function resolveSarvamOutboundPathIds(options: {
+  requireConfigured: boolean;
+}): { orgId: string; workspaceId: string } {
+  const orgId = process.env.SARVAM_ORG_ID?.trim() ?? "";
+  const workspaceId = process.env.SARVAM_WORKSPACE_ID?.trim() ?? "";
+
+  if (options.requireConfigured) {
+    if (isUnsetSarvamPathId(orgId, "your-sarvam-org-id-here")) {
+      throw new SarvamApiError(
+        "SARVAM_ORG_ID must be configured with your Sarvam organisation ID for live outbound calls",
+        401
+      );
+    }
+    if (isUnsetSarvamPathId(workspaceId, "your-sarvam-workspace-id-here")) {
+      throw new SarvamApiError(
+        "SARVAM_WORKSPACE_ID must be configured with your Sarvam workspace ID for live outbound calls",
+        401
+      );
+    }
+    return { orgId, workspaceId };
+  }
+
+  return {
+    orgId: isUnsetSarvamPathId(orgId, "your-sarvam-org-id-here")
+      ? "mock_sarvam_org"
+      : orgId,
+    workspaceId: isUnsetSarvamPathId(workspaceId, "your-sarvam-workspace-id-here")
+      ? "mock_sarvam_workspace"
+      : workspaceId,
+  };
+}
+
 export class SarvamClient {
   private apiKey: string;
   private baseUrl: string;
@@ -80,8 +137,8 @@ export class SarvamClient {
   /**
    * Dispatches an outbound voice call via Sarvam's API.
    *
-   * @param orgId - External or tenant organisation ID
-   * @param workspaceId - Workspace ID
+   * @param orgId - External Sarvam organisation ID (from SARVAM_ORG_ID), not a Prisma CUID
+   * @param workspaceId - External Sarvam workspace ID (from SARVAM_WORKSPACE_ID), not a Prisma CUID
    * @param payload - Outbound call payload matching Sarvam API specification
    */
   public async createOutboundCall(
@@ -101,7 +158,20 @@ export class SarvamClient {
       );
     }
 
-    const endpoint = `${this.baseUrl}/api/outbounds/v1/orgs/${orgId}/workspaces/${workspaceId}/outbounds`;
+    // Live path IDs must come from SARVAM_ORG_ID / SARVAM_WORKSPACE_ID (never Prisma CUIDs).
+    // Re-resolve from env so a caller cannot silently substitute internal tenant IDs.
+    const pathIds = resolveSarvamOutboundPathIds({ requireConfigured: true });
+    if (
+      orgId.trim() !== pathIds.orgId ||
+      workspaceId.trim() !== pathIds.workspaceId
+    ) {
+      throw new SarvamApiError(
+        "Live outbound calls must use SARVAM_ORG_ID and SARVAM_WORKSPACE_ID (not internal database IDs)",
+        401
+      );
+    }
+
+    const endpoint = `${this.baseUrl}/api/outbounds/v1/orgs/${pathIds.orgId}/workspaces/${pathIds.workspaceId}/outbounds`;
 
     let response: Response;
     try {

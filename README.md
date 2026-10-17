@@ -163,8 +163,9 @@ Superadmin sets each company’s RPS from the admin UI.
 
 **Dispatch:** `POST …/api/outbounds/v1/orgs/{org}/workspaces/{ws}/outbounds`
 
+- Path `{org}` / `{ws}` come from server-side `SARVAM_ORG_ID` / `SARVAM_WORKSPACE_ID` (shared Sarvam account IDs), not Prisma organisation/workspace CUIDs.
 - Mock when `SARVAM_MOCK_MODE=true` or key is missing/placeholder.
-- Live when mock is off and a real `SARVAM_API_KEY` is set (non-placeholder `appId` / `connectionId` / caller number required).
+- Live when mock is off and a real `SARVAM_API_KEY` plus path IDs are set (non-placeholder `appId` / `connectionId` / caller number required).
 
 **Webhooks:** `POST /api/webhooks/sarvam`
 

@@ -2,7 +2,12 @@ import { prisma } from "./prisma";
 import { OrgRateLimiter } from "./rate-limiter";
 import { resolveOrganizationRequestsPerSecond } from "./validations/rate-limit";
 import { isCallingWindowOpen } from "./scheduler";
-import { sarvamClient, SarvamApiError, SarvamClient } from "./sarvam";
+import {
+  sarvamClient,
+  SarvamApiError,
+  SarvamClient,
+  resolveSarvamOutboundPathIds,
+} from "./sarvam";
 import { OutboundCallJobData, enqueueContactRetry } from "./queue";
 
 export interface ExecutionResult {
@@ -204,6 +209,16 @@ export async function processOutboundCallJob(
     if (!process.env.SARVAM_API_KEY || process.env.SARVAM_API_KEY === "your-sarvam-api-key-here") {
       invalidConfig.push("SARVAM_API_KEY must be configured with a valid provider key");
     }
+    // Shared Sarvam account path IDs — distinct from Prisma organizationId / workspaceId
+    try {
+      resolveSarvamOutboundPathIds({ requireConfigured: true });
+    } catch (err) {
+      invalidConfig.push(
+        err instanceof Error
+          ? err.message
+          : "SARVAM_ORG_ID and SARVAM_WORKSPACE_ID must be configured for live outbound calls"
+      );
+    }
 
     if (invalidConfig.length > 0) {
       throw new Error(
@@ -211,6 +226,10 @@ export async function processOutboundCallJob(
       );
     }
   }
+
+  // External Sarvam path IDs for the provider URL; internal CUIDs stay on campaign for DB/auth/rate limits
+  const { orgId: sarvamOrgId, workspaceId: sarvamWorkspaceId } =
+    resolveSarvamOutboundPathIds({ requireConfigured: !isMock });
 
   const payload = {
     app_config: {
@@ -242,8 +261,8 @@ export async function processOutboundCallJob(
   // 6. Dispatch outbound call
   try {
     const response = await sarvamClient.createOutboundCall(
-      campaign.organizationId,
-      campaign.workspaceId,
+      sarvamOrgId,
+      sarvamWorkspaceId,
       payload
     );
 

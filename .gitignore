@@ -13,6 +13,9 @@
 # testing
 /coverage
 
+# local ephemeral Postgres data for offline tests
+/.local-pgdata/
+
 # next.js
 /.next/
 /out/
